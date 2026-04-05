@@ -1,0 +1,41 @@
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    alpha: 0.5
+
+model:
+  name: mlp
+  hidden_size: 100
+
+topology:
+  n_nodes: 20
+  n_attackers: 4
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 100
+  local_epochs: 1
+  batch_size: 32
+  lr: 0.1
+
+dp:
+  clip_bound: 2.0
+  noise_mult: 1.1
+  delta: 1.0e-5
+  alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
+  epsilon_max: 10.0
+
+attack:
+  type: scale
+  scale_factor: 3.0
+
+aggregation:
+  type: kurtosis_avg
+  centered: false
+  confidence: 1.96
+
+output_dir: dpfl/results
+device: auto    # "cpu", "cuda", or "auto" (auto-detect GPU)
+seed: 42

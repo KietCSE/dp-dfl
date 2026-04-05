@@ -1,0 +1,17 @@
+============================================================
+REPORT: DP-SGD DFL + Kurtosis Detection
+============================================================
+Timestamp:                  20260405_094608
+Rounds completed:           5
+Final accuracy:             0.4847
+Final test loss:            14.9841
+Final epsilon:              1.04
+Best alpha:                 20
+Avg precision:              0.8868
+Avg recall:                 1.0000
+Avg F1 score:               0.9375
+Avg kurtosis (honest):      0.000149
+Avg kurtosis (attacker):    190.29
+Avg update norm (honest):   18.7241
+Avg update norm (attacker): 5.3100
+============================================================
