@@ -19,17 +19,17 @@ pip install torch torchvision pyyaml matplotlib numpy
 
 Hoặc:
 ```bash
-pip install -r dpfl/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Chạy Nhanh
 
 ```bash
 # Chạy với config mặc định
-python -m dpfl dpfl/config.yaml
+python run.py
 
-# Hoặc custom config
-python -m dpfl path/to/my_config.yaml
+# Chạy với config tùy chỉnh
+python run.py path/to/my_config.yaml
 ```
 
 ### Output Console
@@ -59,11 +59,10 @@ Final epsilon:    8.73
 | `kurtosis.png` | Kurtosis honest vs attacker |
 | `detection.png` | Precision / Recall detection |
 
-Xem kết quả trên server:
+Xem kết quả:
 ```bash
-column -t -s',' results/metrics.csv   # bảng CSV
-cat results/metrics.json              # JSON
-scp server:path/results/*.png .       # download plot về local
+column -t -s',' results/<timestamp>/metrics.csv   # bảng CSV
+cat results/<timestamp>/metrics.json               # JSON
 ```
 
 ## Cấu Hình (YAML)
@@ -276,7 +275,7 @@ class LaplaceMechanism(BaseNoiseMechanism):
 3. [ ] Dùng `@register(REGISTRY, "tên")` decorator
 4. [ ] Thêm import vào `dpfl/__main__.py` (dòng `import dpfl.xxx.yyy  # noqa: F401`)
 5. [ ] Cập nhật config YAML với tên mới
-6. [ ] Chạy test: `python -m dpfl config.yaml`
+6. [ ] Chạy test: `python run.py config.yaml`
 
 ## Thuật Toán DP-SGD (Tóm Tắt)
 
