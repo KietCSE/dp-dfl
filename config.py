@@ -37,6 +37,7 @@ class TrainingConfig:
     local_epochs: int = 1
     batch_size: int = 32
     lr: float = 0.1
+    n_workers: int = 1  # thread pool size for parallel node training
 
 
 @dataclass

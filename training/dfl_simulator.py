@@ -1,6 +1,7 @@
 """Main DFL orchestrator: setup nodes, run rounds, track metrics."""
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -14,7 +15,7 @@ from dpfl.privacy.base_noise_mechanism import BaseNoiseMechanism
 from dpfl.privacy.renyi_accountant import RenyiAccountant
 from dpfl.aggregation.base_aggregator import BaseAggregator
 from dpfl.attacks.base_attack import BaseAttack
-from dpfl.topology.random_graph import create_random_graph
+from dpfl.topology.random_graph import create_regular_graph
 from dpfl.training.dpsgd_trainer import DPSGDTrainer
 from dpfl.training.node import Node
 
@@ -50,7 +51,7 @@ class DFLSimulator:
             self.config.dataset.split.mode, self.config.dataset.split.alpha,
         )
 
-        self.topology = create_random_graph(
+        self.topology = create_regular_graph(
             self.config.topology.n_nodes, self.config.topology.n_neighbors,
             self.config.topology.seed,
         )
@@ -81,15 +82,27 @@ class DFLSimulator:
     def run(self):
         """Main loop: T rounds of DFL with DP-SGD + kurtosis detection."""
         for t in range(self.config.training.n_rounds):
-            # Step 1: All nodes compute updates
+            # Step 1: All nodes compute updates (parallel via thread pool)
             updates, all_steps = {}, {}
-            for node in self.nodes.values():
+            n_workers = self.config.training.n_workers
+
+            def _train_node(node):
+                attack = self.attack if node.is_attacker else None
                 update, n_steps = node.compute_update(
-                    self.trainer, self.noise_mechanism,
-                    self.attack if node.is_attacker else None,
+                    self.trainer, self.noise_mechanism, attack,
                 )
-                updates[node.id] = update
-                all_steps[node.id] = n_steps
+                return node.id, update, n_steps
+
+            if n_workers > 1:
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    for nid, update, n_steps in pool.map(_train_node, self.nodes.values()):
+                        updates[nid] = update
+                        all_steps[nid] = n_steps
+            else:
+                for node in self.nodes.values():
+                    nid, update, n_steps = _train_node(node)
+                    updates[nid] = update
+                    all_steps[nid] = n_steps
 
             # Compute update norms per node
             update_norms = {nid: float(torch.norm(upd).item()) for nid, upd in updates.items()}

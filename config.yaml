@@ -19,6 +19,7 @@ training:
   local_epochs: 1
   batch_size: 32
   lr: 0.1
+  n_workers: 5          # thread pool size (1 = sequential, 5 = 5 nodes train song song)
 
 dp:
   clip_bound: 2.0
