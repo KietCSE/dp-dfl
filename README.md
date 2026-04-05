@@ -152,130 +152,363 @@ dpfl/
 
 ## Mở Rộng Hệ Thống
 
-Mọi component đều dùng **Registry pattern** — chỉ cần:
-1. Kế thừa ABC tương ứng
-2. Dùng decorator `@register(REGISTRY, "tên")`
-3. Import file trong `__main__.py`
-4. Dùng tên trong config YAML
+### Cơ Chế Hoạt Động
+
+Hệ thống dùng **Registry pattern** — mỗi component (dataset, model, attack, aggregator, noise mechanism) được đăng ký bằng decorator `@register` với một **key name**. Khi chạy, `__main__.py` đọc config YAML → tra key trong registry → khởi tạo class tương ứng.
+
+**Luồng hoạt động:**
+
+```
+config.yaml          config.py              registry.py           __main__.py
+─────────────       ────────────           ─────────────         ─────────────
+dataset:            DatasetConfig          DATASETS = {}         dataset_cls = DATASETS["cifar10"]
+  name: "cifar10"     name: str            ┌─"mnist"→MNISTDataset
+                                           └─"cifar10"→CIFAR10Dataset  ← bạn thêm
+
+model:              ModelConfig            MODELS = {}           model_cls = MODELS["cnn"]
+  name: "cnn"         name: str            ┌─"mlp"→MLP
+                                           └─"cnn"→CNN           ← bạn thêm
+```
+
+**Quy trình thêm component mới (4 bước):**
+
+1. Tạo file `.py` mới, kế thừa base class + dùng `@register(REGISTRY, "key")`
+2. Thêm `import` vào `dpfl/__main__.py` để kích hoạt decorator
+3. (Nếu cần param mới) Thêm field vào dataclass config trong `dpfl/config.py` + cập nhật logic khởi tạo trong `__main__.py`
+4. Cập nhật `config.yaml` với key + params mới
+
+---
 
 ### Thêm Dataset Mới
 
+**Base class:** `dpfl/data/base_dataset.py` — cần implement 4 abstract methods.
+
+**Bước 1 — Tạo file:**
 ```python
 # dpfl/data/cifar10_dataset.py
+import torch
+from torch.utils.data import Dataset, Subset
+from torchvision import datasets, transforms
+from typing import Dict, Tuple
+
 from dpfl.data.base_dataset import BaseDataset
 from dpfl.registry import register, DATASETS
 
-@register(DATASETS, "cifar10")
+
+@register(DATASETS, "cifar10")          # ← key dùng trong config.yaml
 class CIFAR10Dataset(BaseDataset):
 
     @property
-    def input_shape(self):
-        return (3, 32, 32)
+    def input_shape(self) -> Tuple[int, ...]:
+        return (3, 32, 32)              # C, H, W
 
     @property
-    def num_classes(self):
+    def num_classes(self) -> int:
         return 10
 
-    def load(self):
-        # Return (train_dataset, test_dataset)
-        ...
+    def load(self) -> Tuple[Dataset, Dataset]:
+        tf = transforms.Compose([transforms.ToTensor()])
+        train = datasets.CIFAR10("./data", train=True, download=True, transform=tf)
+        test = datasets.CIFAR10("./data", train=False, download=True, transform=tf)
+        return train, test
 
-    def split(self, dataset, n_nodes, mode="iid", alpha=0.5):
-        # Return {node_id: Subset}
+    def split(self, dataset: Dataset, n_nodes: int,
+              mode: str = "iid", alpha: float = 0.5) -> Dict[int, Subset]:
+        # Chia dataset cho n_nodes, trả về {node_id: Subset}
+        # Tham khảo dpfl/data/mnist_dataset.py cho IID / Dirichlet split
         ...
 ```
 
-Config: `dataset.name: cifar10`
+**Bước 2 — Đăng ký import** trong `dpfl/__main__.py`:
+```python
+import dpfl.data.cifar10_dataset  # noqa: F401
+```
+
+**Bước 3 — Config:** Không cần sửa `config.py` (dùng chung `DatasetConfig.name`).
+
+**Bước 4 — YAML:**
+```yaml
+dataset:
+  name: cifar10       # ← key đã register
+  split:
+    mode: iid
+```
+
+> `__main__.py` sẽ gọi: `DATASETS["cifar10"]()` → lấy `input_shape`, `num_classes` → truyền vào model.
+
+---
 
 ### Thêm Model Mới
 
+**Base class:** `dpfl/models/base_model.py` — cần implement `forward()`. Base class cung cấp sẵn `get_flat_params()`, `set_flat_params()`, `count_params()`.
+
+**Constructor phải nhận 3 tham số** (do `__main__.py` truyền vào):
+- `input_dim`: tích các chiều của `dataset.input_shape` (ví dụ: 784 cho MNIST, 3072 cho CIFAR10)
+- `hidden_size`: từ `config.model.hidden_size`
+- `num_classes`: từ `dataset.num_classes`
+
+**Bước 1 — Tạo file:**
 ```python
 # dpfl/models/cnn_model.py
+import torch
+import torch.nn as nn
+
 from dpfl.models.base_model import BaseModel
 from dpfl.registry import register, MODELS
 
+
 @register(MODELS, "cnn")
 class CNN(BaseModel):
-    def __init__(self, input_dim, hidden_size, num_classes):
+    def __init__(self, input_dim: int = 784, hidden_size: int = 100,
+                 num_classes: int = 10):
         super().__init__()
-        # Define layers...
+        # input_dim không dùng trực tiếp cho CNN, dùng spatial dims thay thế
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64 * 7 * 7, hidden_size), nn.ReLU(),
+            nn.Linear(hidden_size, num_classes),
+        )
 
-    def forward(self, x):
-        # Forward pass...
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.classifier(self.features(x))
 ```
 
-Config: `model.name: cnn`
+**Bước 2 — Đăng ký import** trong `dpfl/__main__.py`:
+```python
+import dpfl.models.cnn_model  # noqa: F401
+```
 
-> **Lưu ý:** `BaseModel` cung cấp sẵn `get_flat_params()`, `set_flat_params()`, `count_params()` — không cần override.
+**Bước 3 — Config:** Không cần sửa `config.py` (dùng chung `ModelConfig`).
+
+**Bước 4 — YAML:**
+```yaml
+model:
+  name: cnn           # ← key đã register
+  hidden_size: 128
+```
+
+> `__main__.py` gọi: `MODELS["cnn"](input_dim=784, hidden_size=128, num_classes=10)`
+
+---
 
 ### Thêm Attack Mới
 
+**Base class:** `dpfl/attacks/base_attack.py` — cần implement `perturb(honest_update) → Tensor`.
+
+**Nếu attack cần tham số mới** (ngoài `scale_factor`), phải thêm field vào `AttackConfig` trong `config.py` và cập nhật logic khởi tạo trong `__main__.py`.
+
+**Bước 1 — Tạo file:**
 ```python
 # dpfl/attacks/noise_attack.py
+import torch
+
 from dpfl.attacks.base_attack import BaseAttack
 from dpfl.registry import register, ATTACKS
 
+
 @register(ATTACKS, "noise")
 class NoiseAttack(BaseAttack):
-    def __init__(self, noise_scale=1.0):
+    def __init__(self, noise_scale: float = 1.0):
         self.noise_scale = noise_scale
 
-    def perturb(self, honest_update):
+    def perturb(self, honest_update: torch.Tensor) -> torch.Tensor:
         return honest_update + torch.randn_like(honest_update) * self.noise_scale
 ```
 
-Config: `attack.type: noise`
+**Bước 2 — Đăng ký import** trong `dpfl/__main__.py`:
+```python
+import dpfl.attacks.noise_attack  # noqa: F401
+```
+
+**Bước 3 — Thêm config field** trong `dpfl/config.py`:
+```python
+@dataclass
+class AttackConfig:
+    type: str = "scale"
+    scale_factor: float = 3.0
+    noise_scale: float = 1.0       # ← thêm field mới
+```
+
+Cập nhật khởi tạo trong `dpfl/__main__.py`:
+```python
+# Trước (chỉ hỗ trợ scale):
+attack = ATTACKS[config.attack.type](scale_factor=config.attack.scale_factor)
+
+# Sau (truyền toàn bộ params, mỗi class tự nhận kwargs cần thiết):
+attack_kwargs = {"scale_factor": config.attack.scale_factor,
+                 "noise_scale": config.attack.noise_scale}
+attack = ATTACKS[config.attack.type](**attack_kwargs)
+```
+
+> Hoặc giữ đơn giản: mỗi attack class nhận `**kwargs` và lấy param mình cần.
+
+**Bước 4 — YAML:**
+```yaml
+attack:
+  type: noise
+  noise_scale: 2.0
+```
+
+---
 
 ### Thêm Aggregator Mới
 
+**Base class:** `dpfl/aggregation/base_aggregator.py` — cần implement `aggregate()` trả về `AggregationResult`.
+
+**Constructor luôn nhận 3 tham số** (do `__main__.py` truyền):
+- `param_dim`: số chiều model parameters (tự tính từ model)
+- `centered`: từ `config.aggregation.centered`
+- `confidence`: từ `config.aggregation.confidence`
+
+**Bước 1 — Tạo file:**
 ```python
 # dpfl/aggregation/trimmed_mean_aggregator.py
+import torch
+from typing import Dict
+
 from dpfl.aggregation.base_aggregator import BaseAggregator, AggregationResult
 from dpfl.registry import register, AGGREGATORS
 
+
 @register(AGGREGATORS, "trimmed_mean")
 class TrimmedMeanAggregator(BaseAggregator):
-    def __init__(self, param_dim, centered=False, confidence=1.96):
-        self.trim_ratio = 0.1  # trim 10% mỗi đầu
+    def __init__(self, param_dim: int, centered: bool = False,
+                 confidence: float = 1.96):
+        self.trim_ratio = 0.1
 
-    def aggregate(self, own_update, own_params, neighbor_updates):
-        # Implement trimmed mean logic...
+    def aggregate(self, own_update: torch.Tensor, own_params: torch.Tensor,
+                  neighbor_updates: Dict[int, torch.Tensor]) -> AggregationResult:
+        # own_update: (D,) — update của node hiện tại
+        # own_params: (D,) — params hiện tại
+        # neighbor_updates: {node_id: (D,)} — updates từ hàng xóm
+
+        all_updates = torch.stack(list(neighbor_updates.values()))  # (N, D)
+        # Trimmed mean: bỏ trim_ratio ở 2 đầu
+        k = int(len(neighbor_updates) * self.trim_ratio)
+        sorted_updates, _ = all_updates.sort(dim=0)
+        trimmed = sorted_updates[k:len(neighbor_updates) - k].mean(dim=0)
+
+        new_params = own_params + trimmed
         return AggregationResult(
-            new_params=...,
-            clean_ids=[...],
-            flagged_ids=[...],
-            metrics={...},
+            new_params=new_params,
+            clean_ids=list(neighbor_updates.keys()),
+            flagged_ids=[],
+            metrics={"trim_ratio": self.trim_ratio},
         )
 ```
 
-Config: `aggregation.type: trimmed_mean`
+**Bước 2 — Đăng ký import** trong `dpfl/__main__.py`:
+```python
+import dpfl.aggregation.trimmed_mean_aggregator  # noqa: F401
+```
+
+**Bước 3 — Config:** Không cần sửa (dùng chung `AggregationConfig`).
+
+**Bước 4 — YAML:**
+```yaml
+aggregation:
+  type: trimmed_mean  # ← key đã register
+  centered: false
+  confidence: 1.96
+```
+
+> `__main__.py` gọi: `AGGREGATORS["trimmed_mean"](param_dim=..., centered=False, confidence=1.96)`
+
+---
 
 ### Thêm Noise Mechanism Mới
 
+**Base class:** `dpfl/privacy/base_noise_mechanism.py` — cần implement `clip()` và `add_noise()`. Base class cung cấp sẵn template method `clip_and_noise()` (clip → average → add_noise).
+
+**Constructor:** Không nhận tham số (hiện tại `__main__.py` gọi `NOISE_MECHANISMS["gaussian"]()`).
+
+> **Lưu ý:** Hiện tại noise mechanism key bị **hardcode** `"gaussian"` trong `__main__.py`. Để dùng key khác, cần sửa thêm.
+
+**Bước 1 — Tạo file:**
 ```python
 # dpfl/privacy/laplace_mechanism.py
+import torch
+
 from dpfl.privacy.base_noise_mechanism import BaseNoiseMechanism
 from dpfl.registry import register, NOISE_MECHANISMS
 
+
 @register(NOISE_MECHANISMS, "laplace")
 class LaplaceMechanism(BaseNoiseMechanism):
-    def clip(self, per_sample_grads, clip_bound):
-        # L2-norm clip hoặc L1-norm clip...
+    def clip(self, per_sample_grads: torch.Tensor,
+             clip_bound: float) -> torch.Tensor:
+        # L2-norm clipping (giống Gaussian)
+        norms = per_sample_grads.norm(2, dim=1, keepdim=True)
+        clip_factors = torch.clamp(clip_bound / (norms + 1e-12), max=1.0)
+        return per_sample_grads * clip_factors
 
-    def add_noise(self, avg_grad, clip_bound, noise_mult, batch_size):
-        # Laplace noise thay vì Gaussian...
+    def add_noise(self, avg_grad: torch.Tensor, clip_bound: float,
+                  noise_mult: float, batch_size: int) -> torch.Tensor:
+        # Laplace noise thay vì Gaussian
+        noise_scale = noise_mult * clip_bound / batch_size
+        noise = torch.distributions.Laplace(0, noise_scale).sample(avg_grad.shape)
+        return avg_grad + noise.to(avg_grad.device)
 ```
 
-> **Lưu ý:** `clip_and_noise()` (template method) đã được implement sẵn trong base class — chỉ cần override `clip()` và `add_noise()`.
+**Bước 2 — Đăng ký import** trong `dpfl/__main__.py`:
+```python
+import dpfl.privacy.laplace_mechanism  # noqa: F401
+```
+
+**Bước 3 — Sửa `__main__.py`** để đọc key từ config thay vì hardcode:
+```python
+# Trước (hardcode):
+noise_mechanism = NOISE_MECHANISMS["gaussian"]()
+
+# Sau (config-driven):
+noise_mechanism = NOISE_MECHANISMS[config.dp.mechanism]()
+```
+
+Thêm field trong `dpfl/config.py`:
+```python
+@dataclass
+class DPConfig:
+    mechanism: str = "gaussian"    # ← thêm field mới
+    clip_bound: float = 2.0
+    noise_mult: float = 1.1
+    ...
+```
+
+**Bước 4 — YAML:**
+```yaml
+dp:
+  mechanism: laplace   # ← key đã register
+  clip_bound: 2.0
+  noise_mult: 1.1
+```
+
+---
+
+### Tổng Hợp: Đăng Ký Config Cho Component Mới
+
+| Component | Registry | Config key | Cần sửa `config.py`? | Cần sửa `__main__.py`? |
+|-----------|----------|------------|----------------------|------------------------|
+| Dataset | `DATASETS` | `dataset.name` | Không | Không |
+| Model | `MODELS` | `model.name` | Không | Không |
+| Attack | `ATTACKS` | `attack.type` | Có, nếu cần param mới | Có, nếu cần param mới |
+| Aggregator | `AGGREGATORS` | `aggregation.type` | Không | Không |
+| Noise Mechanism | `NOISE_MECHANISMS` | Hardcode `"gaussian"` | Có (`dp.mechanism`) | Có (đọc từ config) |
 
 ### Checklist Mở Rộng
 
-1. [ ] Tạo file mới trong thư mục tương ứng
-2. [ ] Kế thừa ABC và implement tất cả abstract methods
-3. [ ] Dùng `@register(REGISTRY, "tên")` decorator
-4. [ ] Thêm import vào `dpfl/__main__.py` (dòng `import dpfl.xxx.yyy  # noqa: F401`)
-5. [ ] Cập nhật config YAML với tên mới
-6. [ ] Chạy test: `python run.py config.yaml`
+1. [ ] Tạo file `.py` trong thư mục tương ứng (`data/`, `models/`, `attacks/`, `aggregation/`, `privacy/`)
+2. [ ] Kế thừa base class + implement tất cả abstract methods
+3. [ ] Dùng `@register(REGISTRY, "key")` decorator
+4. [ ] Thêm import vào `dpfl/__main__.py`: `import dpfl.xxx.yyy  # noqa: F401`
+5. [ ] (Nếu cần param mới) Thêm field vào dataclass trong `dpfl/config.py` + cập nhật logic khởi tạo trong `__main__.py`
+6. [ ] Cập nhật `config.yaml` với key + params
+7. [ ] Chạy test: `python run.py config.yaml`
 
 ## Thuật Toán DP-SGD (Tóm Tắt)
 
