@@ -135,6 +135,105 @@ Trainer hỗ trợ 3 chế độ tiêm nhiễu qua `dp.noise_mode`:
 - `post_training`: Accountant tích lũy per round (dev tự viết accountant phù hợp)
 - `none`: Không có accountant (`accountant=None`), epsilon = 0
 
+## Trust-Aware D2B-DP (Thuật Toán Bảo Mật Chủ Động)
+
+Mở rộng hệ thống DFL với **Trust-Aware D2B-DP**: per-edge personalized noise dựa trên trust scores, adaptive clipping, Z-Score + cosine anomaly detection, MAD-based dynamic filtering, và penalty mechanism.
+
+Tham khảo chi tiết thuật toán: `docs/Trust-Aware-D2B-DP.md`
+
+### Chạy Trust-Aware D2B-DP
+
+```bash
+# Cách 1: Từ thư mục hiện tại (dpfl/)
+python run-trust-aware.py
+python run-trust-aware.py path/to/my-trust-config.yaml
+
+# Cách 2: Từ thư mục cha (chứa dpfl/)
+cd ..
+python -m dpfl.trust-aware-main
+python -m dpfl.trust-aware-main path/to/my-trust-config.yaml
+```
+
+### Output Console
+
+Mỗi round in progress:
+```
+Round   1/50 | Acc: 0.3993 | Trust H->H: 0.533 H->A: 0.534 | P: 1.00 R: 0.00 F1: 0.00
+Round  10/50 | Acc: 0.7168 | Trust H->H: 0.340 H->A: 0.188 | P: 0.40 R: 0.62 F1: 0.49
+Round  30/50 | Acc: 0.8200 | Trust H->H: 0.650 H->A: 0.050 | P: 0.85 R: 0.90 F1: 0.87
+```
+
+- **Trust H->H**: Trust trung bình của honest nodes → honest neighbors (mong muốn ↑)
+- **Trust H->A**: Trust trung bình của honest nodes → attacker neighbors (mong muốn ↓)
+
+### Output Files (thư mục `results/trust_d2b_<timestamp>/`)
+
+| File | Mô tả |
+|------|--------|
+| `metrics.csv` | Metrics mỗi round (accuracy, precision, recall, f1, trust, tau_drop) |
+| `metrics.json` | Cùng data dạng JSON |
+| `accuracy.png` | Biểu đồ accuracy qua các round |
+| `accuracy_spread.png` | Phân bố accuracy các honest nodes |
+| `detection.png` | Precision / Recall detection |
+| `node_data/round_NNN.json` | Per-node metrics chi tiết mỗi round (trust, z-score, behavior) |
+| `config.yaml` | Bản sao config đã dùng |
+| `report.txt` | Summary report |
+
+Xem kết quả:
+```bash
+column -t -s',' results/trust_d2b_*/metrics.csv   # bảng CSV
+cat results/trust_d2b_*/report.txt                 # summary
+cat results/trust_d2b_*/node_data/round_049.json   # per-node round cuối
+```
+
+### Cấu Hình Trust-Aware (`trust-aware-config.yaml`)
+
+Ngoài các section chung (`dataset`, `model`, `topology`, `training`, `dp`, `attack`), config thêm section `trust`:
+
+```yaml
+trust:
+  trust_init: 0.5        # T[i,j] khởi tạo (cold-start trung lập)
+  ema_lambda: 0.8        # EMA memory factor (0.8 = 80% lịch sử + 20% hiện tại)
+  rho_min: 0.1           # Ngân sách privacy tối thiểu
+  rho_max: 5.0           # Ngân sách privacy tối đa
+  beta: 0.01             # Hệ số tăng ngân sách theo thời gian
+  gamma_penalty: 0.5     # Hệ số phạt trust (nhân 0.5 khi bị reject)
+  gamma_z: 3.0           # Hệ số nhân Z-Score threshold
+  sigma_floor_z: 0.0001  # Sàn độ nhạy Z-Score (tránh threshold = 0)
+  alpha_drop: 2.0        # Hệ số MAD cho ngưỡng loại bỏ tau_drop
+  sigma_floor_drop: 0.001 # Sàn độ nhạy trust filtering
+  clip_window: 3         # FIFO queue size cho adaptive clip (k)
+  temporal_window: 5     # Buffer size cho temporal windowing (W)
+  eta: 0.1               # Bounded noise eta parameter
+```
+
+### Pipeline 4 Giai Đoạn (Mỗi Round)
+
+```
+Phase 1: Train → Adaptive Clip (FIFO history → dynamic threshold → L2 clip)
+Phase 2: Trust → Budget → σ² → Bounded Noise → Gửi per-edge
+Phase 3: Nhận → Z-Score → Cosine → Harmonic Mean → EMA Trust Update
+Phase 4: MAD τ_drop → Reject + Penalty → Mean Aggregate từ clean set
+```
+
+### Files Mới (Trust-Aware D2B-DP)
+
+```
+dpfl/
+├── trust_aware_config.py                      # TrustConfig + TrustAwareExperimentConfig
+├── trust-aware-main.py                        # Entry point
+├── trust-aware-config.yaml                    # Default config
+├── training/
+│   ├── trust-aware-node.py                    # TrustAwareNode(Node) + trust state
+│   └── trust-aware-dfl-simulator.py           # 4-phase simulator
+├── privacy/
+│   ├── adaptive_clipper.py                    # FIFO queue + dynamic clip
+│   ├── bounded_gaussian_mechanism.py          # Per-neighbor bounded noise
+│   └── per_neighbor_rdp_accountant.py         # Per-edge RDP tracking
+└── aggregation/
+    └── trust-aware-d2b-aggregator.py          # Z-Score+Cosine+MAD+Trust+Penalty
+```
+
 ## Kiến Trúc Module
 
 ```
