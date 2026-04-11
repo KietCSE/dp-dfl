@@ -48,6 +48,7 @@ class ModelConfig:
 
 @dataclass
 class DPConfig:
+    noise_mode: str = "per_step"  # "per_step" | "post_training" | "none"
     clip_bound: float = 2.0
     noise_mult: float = 1.1
     delta: float = 1e-5

@@ -60,10 +60,13 @@ def main():
         **config.aggregation.params,
     )
 
-    accountant = ACCOUNTANTS[config.dp.accountant](
-        delta=config.dp.delta,
-        **config.dp.accountant_params,
-    )
+    # Skip accountant when no DP is applied (noise_mode="none")
+    accountant = None
+    if config.dp.noise_mode != "none":
+        accountant = ACCOUNTANTS[config.dp.accountant](
+            delta=config.dp.delta,
+            **config.dp.accountant_params,
+        )
 
     # Create timestamped run directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

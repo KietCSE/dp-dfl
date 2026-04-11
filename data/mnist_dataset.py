@@ -27,8 +27,10 @@ class MNISTDataset(BaseDataset):
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,)),
         ])
+        print("Loading MNIST dataset...")
         train_ds = datasets.MNIST(".cache/mnist", train=True, download=True, transform=transform)
         test_ds = datasets.MNIST(".cache/mnist", train=False, download=True, transform=transform)
+        print(f"MNIST loaded: {len(train_ds)} train, {len(test_ds)} test samples")
         return train_ds, test_ds
 
     def split(self, dataset: Dataset, n_nodes: int, mode: str = "iid",

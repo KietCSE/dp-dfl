@@ -127,25 +127,27 @@ class DFLSimulator:
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 
-            # Step 5: Privacy accounting
-            honest_steps = next(
-                s for nid, s in all_steps.items() if nid not in self.attacker_ids
-            )
-            q_batch = self.config.training.batch_size / self.nodes[
-                self.config.topology.n_attackers
-            ].n_samples
-            self.accountant.step(honest_steps, q_batch, self.config.dp.noise_mult)
-            epsilon = self.accountant.get_epsilon()
+            # Step 5: Privacy accounting (skip if no accountant, e.g. noise_mode="none")
+            epsilon = 0.0
+            if self.accountant is not None:
+                honest_steps = next(
+                    s for nid, s in all_steps.items() if nid not in self.attacker_ids
+                )
+                q_batch = self.config.training.batch_size / self.nodes[
+                    self.config.topology.n_attackers
+                ].n_samples
+                self.accountant.step(honest_steps, q_batch, self.config.dp.noise_mult)
+                epsilon = self.accountant.get_epsilon()
 
-            if epsilon > self.config.dp.epsilon_max:
-                print(f"Round {t + 1}: Budget exceeded (eps={epsilon:.2f})")
-                if self.tracker:
-                    self.tracker.log_round(
-                        round_num=t, epsilon=epsilon, accuracy=0.0,
-                        best_alpha=self.accountant.get_best_alpha(),
-                        stopped_early=True,
-                    )
-                break
+                if epsilon > self.config.dp.epsilon_max:
+                    print(f"Round {t + 1}: Budget exceeded (eps={epsilon:.2f})")
+                    if self.tracker:
+                        self.tracker.log_round(
+                            round_num=t, epsilon=epsilon, accuracy=0.0,
+                            best_alpha=self.accountant.get_best_alpha() if self.accountant else None,
+                            stopped_early=True,
+                        )
+                    break
 
             # Step 6: Evaluate all nodes (accuracy + test loss)
             eval_results = self._evaluate_nodes()
@@ -208,13 +210,13 @@ class DFLSimulator:
                     f1_score=f1,
                     mean_update_norm_honest=float(np.mean(honest_norms)) if honest_norms else 0.0,
                     mean_update_norm_attacker=float(np.mean(attacker_norms)) if attacker_norms else 0.0,
-                    best_alpha=self.accountant.get_best_alpha(),
+                    best_alpha=self.accountant.get_best_alpha() if self.accountant else None,
                     precision=precision, recall=recall,
                     **defense_round,
                 )
                 self.tracker.log_node_round(t, nodes_data)
 
-            if (t + 1) % 10 == 0:
+            if True:
                 print(
                     f"Round {t + 1:3d}/{self.config.training.n_rounds} | "
                     f"Acc: {accuracy:.4f} | Loss: {test_loss:.4f} | "
