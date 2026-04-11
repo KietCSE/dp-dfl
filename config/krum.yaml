@@ -1,0 +1,46 @@
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    alpha: 0.5
+
+model:
+  name: mlp
+  hidden_size: 100
+
+topology:
+  n_nodes: 20
+  n_attackers: 4
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 30
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: none            # No DP — plain Krum defense only
+  clip_bound: 2.0
+  noise_mult: 1.1
+  delta: 1.0e-5
+  epsilon_max: 10.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
+
+attack:
+  type: scale
+  scale_factor: 3.0
+
+aggregation:
+  type: krum
+  params:
+    n_attackers: 4            # expected number of Byzantine nodes (f)
+    multi_k: 1                # 1 = single Krum, >1 = Multi-Krum
+
+output_dir: ./results
+device: auto
+seed: 42

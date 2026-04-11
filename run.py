@@ -1,10 +1,164 @@
-"""Run from inside dpfl/: python run.py [config.yaml]"""
+"""Unified runner for all DFL algorithms.
+
+Usage:
+    python run.py -a dpsgd-kurtosis    [config.yaml]
+    python run.py -a trust-aware       [config.yaml]
+    python run.py -a noise-game        [config.yaml]
+"""
+
 import sys
+import argparse
 from pathlib import Path
 
 # Add parent dir to sys.path so 'import dpfl' works
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dpfl.__main__ import main  # noqa: E402
+# Force registry population
+import dpfl.data.mnist_dataset  # noqa: F401
+import dpfl.models.mlp_model  # noqa: F401
+import dpfl.core.gaussian_mechanism  # noqa: F401
+import dpfl.core.scale_attack  # noqa: F401
+import dpfl.core.renyi_accountant  # noqa: F401
+import dpfl.algorithms.dpsgd_kurtosis.kurtosis_aggregator  # noqa: F401
+import dpfl.algorithms.noise_game.simple_avg_aggregator  # noqa: F401
+import dpfl.algorithms.trust_aware.aggregator  # noqa: F401
+import dpfl.algorithms.krum.krum_aggregator  # noqa: F401
 
-main()
+from dpfl.registry import NOISE_MECHANISMS, AGGREGATORS, ATTACKS, ACCOUNTANTS
+from dpfl.experiment_runner import run_experiment
+
+
+# -- Build functions per algorithm --
+
+def build_dpsgd_kurtosis(config, dataset_cls, model_cls, param_dim, tracker, device):
+    from dpfl.algorithms.dpsgd_kurtosis.simulator import DFLSimulator
+    noise_mechanism = NOISE_MECHANISMS["gaussian"]()
+    attack = ATTACKS[config.attack.type](scale_factor=config.attack.scale_factor)
+    aggregator = AGGREGATORS[config.aggregation.type](
+        param_dim=param_dim, **config.aggregation.params)
+    accountant = None
+    if config.dp.noise_mode != "none":
+        accountant = ACCOUNTANTS[config.dp.accountant](
+            delta=config.dp.delta, **config.dp.accountant_params)
+    return DFLSimulator(
+        config, dataset_cls, model_cls,
+        noise_mechanism, aggregator, attack,
+        accountant=accountant, tracker=tracker, device=device)
+
+
+def build_trust_aware(config, dataset_cls, model_cls, param_dim, tracker, device):
+    from dpfl.algorithms.trust_aware.simulator import TrustAwareDFLSimulator
+    from dpfl.algorithms.trust_aware.adaptive_clipper import AdaptiveClipper
+    from dpfl.algorithms.trust_aware.bounded_gaussian import BoundedGaussianMechanism
+    from dpfl.algorithms.trust_aware.per_neighbor_accountant import PerNeighborRDPAccountant
+    noise_mechanism = NOISE_MECHANISMS["gaussian"]()
+    attack = ATTACKS[config.attack.type](scale_factor=config.attack.scale_factor)
+    aggregator = AGGREGATORS["trust_aware_d2b"](
+        param_dim=param_dim,
+        ema_lambda=config.trust.ema_lambda,
+        gamma_z=config.trust.gamma_z,
+        sigma_floor_z=config.trust.sigma_floor_z,
+        alpha_drop=config.trust.alpha_drop,
+        sigma_floor_drop=config.trust.sigma_floor_drop,
+        gamma_penalty=config.trust.gamma_penalty)
+    alpha_list = config.dp.accountant_params.get(
+        "alpha_list", [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100])
+    return TrustAwareDFLSimulator(
+        config, config.trust, dataset_cls, model_cls,
+        noise_mechanism, aggregator, attack,
+        AdaptiveClipper(config.trust.clip_window),
+        BoundedGaussianMechanism(eta=config.trust.eta),
+        PerNeighborRDPAccountant(
+            alpha_list=alpha_list, delta=config.dp.delta,
+            epsilon_max=config.dp.epsilon_max),
+        tracker=tracker, device=device)
+
+
+def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device):
+    from dpfl.algorithms.noise_game.simulator import NoiseGameDFLSimulator
+    from dpfl.algorithms.noise_game.mechanism import NoiseGameMechanism
+    from dpfl.core.gaussian_mechanism import GaussianMechanism
+    noise_mechanism = GaussianMechanism()
+    attack = ATTACKS[config.attack.type](scale_factor=config.attack.scale_factor)
+    aggregator = AGGREGATORS[config.aggregation.type](
+        param_dim=param_dim, **config.aggregation.params)
+    ng = config.noise_game
+    game_mechanism = NoiseGameMechanism(
+        alpha_attack=ng.alpha_attack, sigma_0=ng.sigma_0,
+        anneal_kappa=ng.anneal_kappa, svd_rank=ng.svd_rank,
+        svd_reshape_k=ng.svd_reshape_k)
+    alpha_list = config.dp.accountant_params.get(
+        "alpha_list", [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100])
+    accountant = ACCOUNTANTS[config.dp.accountant](
+        delta=config.dp.delta, alpha_list=alpha_list)
+    return NoiseGameDFLSimulator(
+        config, config.noise_game, dataset_cls, model_cls,
+        noise_mechanism, game_mechanism, aggregator, attack,
+        accountant=accountant, tracker=tracker, device=device)
+
+
+# FedAvg and Krum reuse same simulator (DFLSimulator), only aggregator differs via config
+build_fedavg = build_dpsgd_kurtosis
+build_krum = build_dpsgd_kurtosis
+
+
+# -- Algorithm registry --
+
+ALGORITHMS = {
+    "dpsgd-kurtosis": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_dpsgd_kurtosis,
+        "prefix": "dpsgd_kurtosis",
+        "default_config": "config/dpsgd_kurtosis.yaml",
+    },
+    "fedavg": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_fedavg,
+        "prefix": "fedavg",
+        "default_config": "config/fedavg.yaml",
+    },
+    "krum": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_krum,
+        "prefix": "krum",
+        "default_config": "config/krum.yaml",
+    },
+    "trust-aware": {
+        "config_cls": "dpfl.config.TrustAwareExperimentConfig",
+        "build_fn": build_trust_aware,
+        "prefix": "trust_d2b",
+        "default_config": "config/trust_aware.yaml",
+    },
+    "noise-game": {
+        "config_cls": "dpfl.config.NoiseGameExperimentConfig",
+        "build_fn": build_noise_game,
+        "prefix": "noise_game",
+        "default_config": "config/noise_game.yaml",
+    },
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="DPFL — Run DFL experiment")
+    parser.add_argument("--algorithm", "-a", choices=ALGORITHMS.keys(),
+                        default="dpsgd-kurtosis",
+                        help="Algorithm variant (default: dpsgd-kurtosis)")
+    parser.add_argument("config", nargs="?", help="Path to config YAML")
+    args = parser.parse_args()
+
+    algo = ALGORITHMS[args.algorithm]
+
+    # Lazy import config class
+    import importlib
+    mod_path, cls_name = algo["config_cls"].rsplit(".", 1)
+    config_cls = getattr(importlib.import_module(mod_path), cls_name)
+
+    # Override sys.argv for experiment_runner
+    config_path = args.config or str(Path(__file__).parent / algo["default_config"])
+    sys.argv = [sys.argv[0], config_path]
+
+    run_experiment(config_cls, algo["build_fn"], algo["prefix"], algo["default_config"])
+
+
+if __name__ == "__main__":
+    main()
