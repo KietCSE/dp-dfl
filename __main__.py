@@ -11,7 +11,7 @@ import torch
 import numpy as np
 
 from dpfl.config import ExperimentConfig
-from dpfl.registry import DATASETS, MODELS, NOISE_MECHANISMS, AGGREGATORS, ATTACKS
+from dpfl.registry import DATASETS, MODELS, NOISE_MECHANISMS, AGGREGATORS, ATTACKS, ACCOUNTANTS
 
 # Force registry population by importing concrete implementations
 import dpfl.data.mnist_dataset       # noqa: F401
@@ -19,6 +19,7 @@ import dpfl.models.mlp_model         # noqa: F401
 import dpfl.privacy.gaussian_mechanism  # noqa: F401
 import dpfl.attacks.scale_attack     # noqa: F401
 import dpfl.aggregation.kurtosis_avg_aggregator  # noqa: F401
+import dpfl.privacy.renyi_dpsgd                  # noqa: F401
 
 from dpfl.tracking.metrics_tracker import MetricsTracker
 from dpfl.training.dfl_simulator import DFLSimulator
@@ -59,6 +60,11 @@ def main():
         **config.aggregation.params,
     )
 
+    accountant = ACCOUNTANTS[config.dp.accountant](
+        delta=config.dp.delta,
+        **config.dp.accountant_params,
+    )
+
     # Create timestamped run directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(config.output_dir) / timestamp
@@ -71,7 +77,8 @@ def main():
     # Create and run simulator
     simulator = DFLSimulator(
         config, dataset_cls, model_cls,
-        noise_mechanism, aggregator, attack, tracker,
+        noise_mechanism, aggregator, attack,
+        accountant=accountant, tracker=tracker,
         device=device,
     )
     simulator.setup()

@@ -3,8 +3,12 @@
 import math
 from typing import List
 
+from dpfl.privacy.base_accountant import BaseAccountant
+from dpfl.registry import register, ACCOUNTANTS
 
-class RenyiAccountant:
+
+@register(ACCOUNTANTS, "renyi_dpsgd")
+class RenyiAccountant(BaseAccountant):
     """
     Tracks cumulative RDP cost across DP-SGD steps.
     eps_step(alpha) = q^2 * alpha / (2 * z^2)  per step.

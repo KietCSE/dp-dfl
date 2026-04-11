@@ -7,6 +7,7 @@ MODELS: Dict[str, Type] = {}
 NOISE_MECHANISMS: Dict[str, Type] = {}
 AGGREGATORS: Dict[str, Type] = {}
 ATTACKS: Dict[str, Type] = {}
+ACCOUNTANTS: Dict[str, Type] = {}
 
 
 def register(registry: Dict[str, Type], name: str):

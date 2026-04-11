@@ -1,7 +1,7 @@
 """Nested dataclass config with YAML loader."""
 
 from dataclasses import dataclass, field, fields
-from typing import List, get_type_hints
+from typing import get_type_hints
 import yaml
 
 
@@ -51,10 +51,11 @@ class DPConfig:
     clip_bound: float = 2.0
     noise_mult: float = 1.1
     delta: float = 1e-5
-    alpha_list: List[float] = field(
-        default_factory=lambda: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
-    )
     epsilon_max: float = 10.0
+    accountant: str = "renyi_dpsgd"
+    accountant_params: dict = field(default_factory=lambda: {
+        "alpha_list": [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100],
+    })
 
 
 @dataclass

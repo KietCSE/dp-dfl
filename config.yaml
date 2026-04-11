@@ -25,8 +25,10 @@ dp:
   clip_bound: 2.0
   noise_mult: 1.1
   delta: 1.0e-5
-  alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
   epsilon_max: 10.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
 
 attack:
   type: scale

@@ -12,7 +12,7 @@ from dpfl.config import ExperimentConfig
 from dpfl.data.base_dataset import BaseDataset
 from dpfl.models.base_model import BaseModel
 from dpfl.privacy.base_noise_mechanism import BaseNoiseMechanism
-from dpfl.privacy.renyi_dpsgd import RenyiAccountant
+from dpfl.privacy.base_accountant import BaseAccountant
 from dpfl.aggregation.base_aggregator import BaseAggregator
 from dpfl.attacks.base_attack import BaseAttack
 from dpfl.topology.random_graph import create_regular_graph
@@ -25,6 +25,7 @@ class DFLSimulator:
                  dataset_cls: Type[BaseDataset], model_cls: Type[BaseModel],
                  noise_mechanism: BaseNoiseMechanism,
                  aggregator: BaseAggregator, attack: BaseAttack,
+                 accountant: BaseAccountant = None,
                  tracker=None, device=None):
         self.config = config
         self.dataset_cls = dataset_cls
@@ -32,11 +33,11 @@ class DFLSimulator:
         self.noise_mechanism = noise_mechanism
         self.aggregator = aggregator
         self.attack = attack
+        self.accountant = accountant
         self.tracker = tracker
         self.device = device or torch.device("cpu")
         self.nodes: Dict[int, Node] = {}
         self.topology: Dict[int, Set[int]] = {}
-        self.accountant = None
         self.trainer = None
         self.test_dataset = None
         self.test_loader = None
@@ -72,7 +73,6 @@ class DFLSimulator:
             node.neighbors = self.topology[i]
             self.nodes[i] = node
 
-        self.accountant = RenyiAccountant(self.config.dp.alpha_list, self.config.dp.delta)
         self.trainer = DPSGDTrainer(self.config.training, self.config.dp, self.device)
 
         # Cache test loader
