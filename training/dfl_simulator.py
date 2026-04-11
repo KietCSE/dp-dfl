@@ -12,7 +12,7 @@ from dpfl.config import ExperimentConfig
 from dpfl.data.base_dataset import BaseDataset
 from dpfl.models.base_model import BaseModel
 from dpfl.privacy.base_noise_mechanism import BaseNoiseMechanism
-from dpfl.privacy.renyi_accountant import RenyiAccountant
+from dpfl.privacy.renyi_dpsgd import RenyiAccountant
 from dpfl.aggregation.base_aggregator import BaseAggregator
 from dpfl.attacks.base_attack import BaseAttack
 from dpfl.topology.random_graph import create_regular_graph
@@ -80,7 +80,7 @@ class DFLSimulator:
         self.test_loader = DataLoader(self.test_dataset, batch_size=256, shuffle=False)
 
     def run(self):
-        """Main loop: T rounds of DFL with DP-SGD + kurtosis detection."""
+        """Main loop: T rounds of DFL with DP-SGD + aggregation defense."""
         for t in range(self.config.training.n_rounds):
             # Step 1: All nodes compute updates (parallel via thread pool)
             updates, all_steps = {}, {}
@@ -107,10 +107,10 @@ class DFLSimulator:
             # Compute update norms per node
             update_norms = {nid: float(torch.norm(upd).item()) for nid, upd in updates.items()}
 
-            # Step 2-4: Aggregate (includes kurtosis defense)
+            # Step 2-4: Aggregate (defense filtering handled by aggregator)
             total_tp, total_fp, total_fn, total_tn = 0, 0, 0, 0
             per_node_detection = {}
-            kurtosis_per_node = {}
+            node_agg_metrics = {}
 
             for node in self.nodes.values():
                 neighbor_updates = {j: updates[j] for j in node.neighbors}
@@ -118,6 +118,7 @@ class DFLSimulator:
                     updates[node.id], node.model.get_flat_params(), neighbor_updates,
                 )
                 node.model.set_flat_params(result.new_params)
+                node_agg_metrics[node.id] = result.node_metrics
 
                 # Per-node detection metrics
                 tp, fp, fn, tn = self._compute_detection(
@@ -125,16 +126,6 @@ class DFLSimulator:
                 )
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
-
-            # Log own-update kurtosis per node
-            kurtosis_honest, kurtosis_attacker = [], []
-            for nid, upd in updates.items():
-                k_val = float(self.aggregator._excess_kurtosis(upd))
-                kurtosis_per_node[nid] = k_val
-                if nid in self.attacker_ids:
-                    kurtosis_attacker.append(k_val)
-                else:
-                    kurtosis_honest.append(k_val)
 
             # Step 5: Privacy accounting
             honest_steps = next(
@@ -174,22 +165,10 @@ class DFLSimulator:
             attacker_norms = [update_norms[nid] for nid in update_norms if nid in self.attacker_ids]
 
             if self.tracker:
-                # Aggregated round log
-                self.tracker.log_round(
-                    round_num=t, epsilon=epsilon,
-                    accuracy=float(accuracy),
-                    test_loss=float(test_loss),
-                    f1_score=f1,
-                    mean_update_norm_honest=float(np.mean(honest_norms)) if honest_norms else 0.0,
-                    mean_update_norm_attacker=float(np.mean(attacker_norms)) if attacker_norms else 0.0,
-                    best_alpha=self.accountant.get_best_alpha(),
-                    precision=precision, recall=recall,
-                    kurtosis_honest=float(np.mean(kurtosis_honest)) if kurtosis_honest else 0.0,
-                    kurtosis_attacker=float(np.mean(kurtosis_attacker)) if kurtosis_attacker else 0.0,
-                )
-
                 # Per-node round log
                 nodes_data = {}
+                _known = {"accuracy", "test_loss", "precision", "recall",
+                          "f1_score", "update_norm", "is_attacker"}
                 for nid in self.nodes:
                     tp, fp, fn, tn = per_node_detection[nid]
                     p = tp / (tp + fp) if (tp + fp) > 0 else 1.0
@@ -202,9 +181,37 @@ class DFLSimulator:
                         "recall": r,
                         "f1_score": node_f1,
                         "update_norm": update_norms[nid],
-                        "kurtosis": kurtosis_per_node[nid],
                         "is_attacker": nid in self.attacker_ids,
+                        **node_agg_metrics.get(nid, {}),
                     }
+
+                # Auto-discover defense metrics from aggregator and aggregate by role
+                defense_keys = set()
+                for nd in nodes_data.values():
+                    for k, v in nd.items():
+                        if k not in _known and isinstance(v, (int, float)):
+                            defense_keys.add(k)
+                defense_round = {}
+                for key in defense_keys:
+                    h = [nd[key] for nd in nodes_data.values()
+                         if not nd["is_attacker"] and key in nd]
+                    a = [nd[key] for nd in nodes_data.values()
+                         if nd["is_attacker"] and key in nd]
+                    defense_round[f"{key}_honest"] = float(np.mean(h)) if h else 0.0
+                    defense_round[f"{key}_attacker"] = float(np.mean(a)) if a else 0.0
+
+                # Aggregated round log
+                self.tracker.log_round(
+                    round_num=t, epsilon=epsilon,
+                    accuracy=float(accuracy),
+                    test_loss=float(test_loss),
+                    f1_score=f1,
+                    mean_update_norm_honest=float(np.mean(honest_norms)) if honest_norms else 0.0,
+                    mean_update_norm_attacker=float(np.mean(attacker_norms)) if attacker_norms else 0.0,
+                    best_alpha=self.accountant.get_best_alpha(),
+                    precision=precision, recall=recall,
+                    **defense_round,
+                )
                 self.tracker.log_node_round(t, nodes_data)
 
             if (t + 1) % 10 == 0:

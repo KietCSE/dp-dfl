@@ -12,6 +12,7 @@ class AggregationResult:
     clean_ids: List[int] = field(default_factory=list)
     flagged_ids: List[int] = field(default_factory=list)
     metrics: Dict[str, Any] = field(default_factory=dict)
+    node_metrics: Dict[str, float] = field(default_factory=dict)
 
 
 class BaseAggregator(ABC):

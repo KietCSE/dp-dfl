@@ -42,7 +42,7 @@ Round  20/100 | Acc: 0.7845 | eps: 0.58 | P: 0.89 R: 1.00
 
 Cuối cùng in summary:
 ```
-SUMMARY: DP-SGD DFL + Kurtosis Detection
+SUMMARY: DP-SGD Decentralized Federated Learning
 Rounds completed: 100
 Final accuracy:   0.8912
 Final epsilon:    8.73
@@ -102,8 +102,9 @@ attack:
 
 aggregation:
   type: kurtosis_avg    # aggregator registry key
-  centered: false       # uncentered kurtosis (dùng RMS)
-  confidence: 1.96      # 95% CI cho threshold
+  params:               # constructor kwargs (khác nhau tùy aggregator)
+    centered: false     # uncentered kurtosis (dùng RMS)
+    confidence: 1.96    # 95% CI cho threshold
 
 output_dir: results
 seed: 42
@@ -128,7 +129,7 @@ dpfl/
 ├── privacy/
 │   ├── base_noise_mechanism.py  # ABC: clip(), add_noise(), clip_and_noise()
 │   ├── gaussian_mechanism.py    # L2-norm clip + Gaussian noise
-│   └── renyi_accountant.py      # RDP tracking
+│   └── renyi_dpsgd.py      # RDP tracking
 │
 ├── training/
 │   ├── dpsgd_trainer.py     # Per-sample grad (vmap) + DP-SGD step
@@ -359,12 +360,73 @@ attack:
 
 ### Thêm Aggregator Mới
 
-**Base class:** `dpfl/aggregation/base_aggregator.py` — cần implement `aggregate()` trả về `AggregationResult`.
+**Base class:** `dpfl/aggregation/base_aggregator.py`
+**Cần implement:** `aggregate()` trả về `AggregationResult`
 
-**Constructor luôn nhận 3 tham số** (do `__main__.py` truyền):
-- `param_dim`: số chiều model parameters (tự tính từ model)
-- `centered`: từ `config.aggregation.centered`
-- `confidence`: từ `config.aggregation.confidence`
+#### Interface chi tiết
+
+```python
+class BaseAggregator(ABC):
+    @abstractmethod
+    def aggregate(
+        self,
+        own_update: torch.Tensor,       # (D,) — update vector của node hiện tại
+        own_params: torch.Tensor,        # (D,) — model params hiện tại của node
+        neighbor_updates: Dict[int, torch.Tensor],  # {neighbor_id: (D,)} — updates từ hàng xóm
+    ) -> AggregationResult:
+        ...
+```
+
+**Input giải thích:**
+
+| Parameter | Shape | Ý nghĩa |
+|-----------|-------|---------|
+| `own_update` | `(D,)` | Gradient update đã qua DP-SGD (clip + noise) của node gọi aggregate. D = tổng số params của model |
+| `own_params` | `(D,)` | Flat vector params hiện tại của model node đó (trước khi aggregate) |
+| `neighbor_updates` | `{int: (D,)}` | Dict mapping neighbor_id → update vector. Đây là updates mà node nhận từ hàng xóm qua topology graph. Có thể chứa cả attacker updates |
+
+**Output — `AggregationResult`:**
+
+```python
+@dataclass
+class AggregationResult:
+    new_params: torch.Tensor              # (D,) — params mới sau aggregation
+    clean_ids: List[int]                  # IDs hàng xóm KHÔNG bị flag (dùng để tính TP/FP/FN/TN)
+    flagged_ids: List[int]                # IDs hàng xóm bị flag là attacker
+    metrics: Dict[str, Any]               # Internal data cho aggregator (optional, bất kỳ structure)
+    node_metrics: Dict[str, float]        # Scalar metrics cho logging — simulator auto-discover
+```
+
+| Field | Bắt buộc | Ý nghĩa |
+|-------|----------|---------|
+| `new_params` | **Có** | Params mới = kết quả aggregation. Simulator gọi `node.model.set_flat_params(result.new_params)` |
+| `clean_ids` | Có | Danh sách neighbor IDs được coi là sạch. Simulator dùng để tính detection metrics (TP/FP/FN/TN so với ground truth attacker_ids) |
+| `flagged_ids` | Có | Danh sách neighbor IDs bị flag. Tổng `clean_ids + flagged_ids` = tất cả neighbors |
+| `metrics` | Optional | Data nội bộ aggregator, có thể chứa dict/list lồng nhau. Không ảnh hưởng simulator |
+| `node_metrics` | Optional | **Dict scalar float** — simulator tự discover và aggregate mean honest/attacker. Ví dụ: `{"kurtosis": -0.02}` → tracker nhận `kurtosis_honest`, `kurtosis_attacker` tự động |
+
+**Luồng data trong simulator:**
+
+```
+                    aggregate()
+                   ┌──────────────────────────────────────┐
+                   │  Aggregator                          │
+own_update (D,) ──→│  1. Filter neighbors (defense logic) │──→ AggregationResult
+own_params (D,) ──→│  2. Aggregate clean updates          │     ├── new_params (D,)
+neighbors {id:(D,)}│  3. Compute node_metrics (optional)  │     ├── clean_ids, flagged_ids
+                   └──────────────────────────────────────┘     ├── metrics (internal)
+                                                                └── node_metrics (auto-logged)
+                                                                      │
+                        Simulator (generic, KHÔNG biết nội dung)      │
+                        ├── Gom node_metrics từ tất cả nodes          │
+                        ├── Auto-discover scalar keys ←───────────────┘
+                        ├── Tính mean honest / mean attacker per key
+                        └── Truyền cho Tracker
+```
+
+**Constructor:** Luôn nhận `param_dim: int` (số chiều model, do `__main__.py` truyền). Các params khác từ `config.aggregation.params` dict.
+
+#### Ví dụ: Trimmed Mean Aggregator
 
 **Bước 1 — Tạo file:**
 ```python
@@ -378,28 +440,23 @@ from dpfl.registry import register, AGGREGATORS
 
 @register(AGGREGATORS, "trimmed_mean")
 class TrimmedMeanAggregator(BaseAggregator):
-    def __init__(self, param_dim: int, centered: bool = False,
-                 confidence: float = 1.96):
-        self.trim_ratio = 0.1
+    def __init__(self, param_dim: int, trim_ratio: float = 0.1):
+        self.trim_ratio = trim_ratio
 
     def aggregate(self, own_update: torch.Tensor, own_params: torch.Tensor,
                   neighbor_updates: Dict[int, torch.Tensor]) -> AggregationResult:
-        # own_update: (D,) — update của node hiện tại
-        # own_params: (D,) — params hiện tại
-        # neighbor_updates: {node_id: (D,)} — updates từ hàng xóm
-
         all_updates = torch.stack(list(neighbor_updates.values()))  # (N, D)
-        # Trimmed mean: bỏ trim_ratio ở 2 đầu
         k = int(len(neighbor_updates) * self.trim_ratio)
         sorted_updates, _ = all_updates.sort(dim=0)
         trimmed = sorted_updates[k:len(neighbor_updates) - k].mean(dim=0)
 
-        new_params = own_params + trimmed
+        new_params = own_params + own_update + trimmed
         return AggregationResult(
             new_params=new_params,
             clean_ids=list(neighbor_updates.keys()),
             flagged_ids=[],
             metrics={"trim_ratio": self.trim_ratio},
+            node_metrics={},  # không có defense metric riêng → OK, để trống
         )
 ```
 
@@ -408,17 +465,16 @@ class TrimmedMeanAggregator(BaseAggregator):
 import dpfl.aggregation.trimmed_mean_aggregator  # noqa: F401
 ```
 
-**Bước 3 — Config:** Không cần sửa (dùng chung `AggregationConfig`).
-
-**Bước 4 — YAML:**
+**Bước 3 — Config:** Không cần sửa `config.py`. Chỉ đổi YAML:
 ```yaml
 aggregation:
-  type: trimmed_mean  # ← key đã register
-  centered: false
-  confidence: 1.96
+  type: trimmed_mean
+  params:
+    trim_ratio: 0.2
 ```
 
-> `__main__.py` gọi: `AGGREGATORS["trimmed_mean"](param_dim=..., centered=False, confidence=1.96)`
+> `__main__.py` gọi: `AGGREGATORS["trimmed_mean"](param_dim=..., trim_ratio=0.2)`
+> `dfl_simulator.py` **KHÔNG cần sửa** — hoàn toàn aggregator-agnostic.
 
 ---
 
@@ -494,10 +550,10 @@ dp:
 
 | Component | Registry | Config key | Cần sửa `config.py`? | Cần sửa `__main__.py`? |
 |-----------|----------|------------|----------------------|------------------------|
-| Dataset | `DATASETS` | `dataset.name` | Không | Không |
-| Model | `MODELS` | `model.name` | Không | Không |
+| Dataset | `DATASETS` | `dataset.name` | Không | Không (chỉ thêm import) |
+| Model | `MODELS` | `model.name` | Không | Không (chỉ thêm import) |
 | Attack | `ATTACKS` | `attack.type` | Có, nếu cần param mới | Có, nếu cần param mới |
-| Aggregator | `AGGREGATORS` | `aggregation.type` | Không | Không |
+| Aggregator | `AGGREGATORS` | `aggregation.type` | Không (dùng `params` dict) | Không (chỉ thêm import) |
 | Noise Mechanism | `NOISE_MECHANISMS` | Hardcode `"gaussian"` | Có (`dp.mechanism`) | Có (đọc từ config) |
 
 ### Checklist Mở Rộng

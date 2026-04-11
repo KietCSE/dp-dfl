@@ -66,8 +66,10 @@ class AttackConfig:
 @dataclass
 class AggregationConfig:
     type: str = "kurtosis_avg"
-    centered: bool = False
-    confidence: float = 1.96
+    params: dict = field(default_factory=lambda: {
+        "centered": False,
+        "confidence": 1.96,
+    })
 
 
 @dataclass

@@ -56,8 +56,7 @@ def main():
 
     aggregator = AGGREGATORS[config.aggregation.type](
         param_dim=param_dim,
-        centered=config.aggregation.centered,
-        confidence=config.aggregation.confidence,
+        **config.aggregation.params,
     )
 
     # Create timestamped run directory

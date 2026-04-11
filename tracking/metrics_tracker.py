@@ -73,7 +73,7 @@ class MetricsTracker:
 
         lines = [
             "=" * 60,
-            "REPORT: DP-SGD DFL + Kurtosis Detection",
+            "REPORT: DP-SGD Decentralized Federated Learning",
             "=" * 60,
         ]
         if timestamp:
@@ -87,12 +87,15 @@ class MetricsTracker:
             f"Avg precision:              {avg('precision'):.4f}",
             f"Avg recall:                 {avg('recall'):.4f}",
             f"Avg F1 score:               {avg('f1_score'):.4f}",
-            f"Avg kurtosis (honest):      {avg('kurtosis_honest'):.6f}",
-            f"Avg kurtosis (attacker):    {avg('kurtosis_attacker'):.2f}",
             f"Avg update norm (honest):   {avg('mean_update_norm_honest'):.4f}",
             f"Avg update norm (attacker): {avg('mean_update_norm_attacker'):.4f}",
-            "=" * 60,
         ]
+        if any("kurtosis_honest" in r for r in self.rounds):
+            lines += [
+                f"Avg kurtosis (honest):      {avg('kurtosis_honest'):.6f}",
+                f"Avg kurtosis (attacker):    {avg('kurtosis_attacker'):.2f}",
+            ]
+        lines.append("=" * 60)
         report = "\n".join(lines)
         with open(self.output_dir / "report.txt", "w") as f:
             f.write(report + "\n")
@@ -210,7 +213,7 @@ class MetricsTracker:
 
         lines = [
             "=" * 60,
-            "SUMMARY: DP-SGD DFL + Kurtosis Detection",
+            "SUMMARY: DP-SGD Decentralized Federated Learning",
             "=" * 60,
             f"Rounds completed:           {n}",
             f"Final accuracy:             {last.get('accuracy', 0):.4f}",

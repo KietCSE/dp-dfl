@@ -37,11 +37,14 @@ class KurtosisAvgAggregator(BaseAggregator):
             clean_stack = torch.stack([neighbor_updates[j] for j in clean_ids])
             new_params = new_params + clean_stack.mean(dim=0)
 
+        own_kurtosis = self._excess_kurtosis(own_update)
+
         return AggregationResult(
             new_params=new_params,
             clean_ids=clean_ids,
             flagged_ids=flagged_ids,
             metrics={"kurtosis": kurtosis_values, "threshold": self.threshold},
+            node_metrics={"kurtosis": float(own_kurtosis)},
         )
 
     def _excess_kurtosis(self, update: torch.Tensor) -> float:

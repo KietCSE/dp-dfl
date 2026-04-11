@@ -34,9 +34,8 @@ attack:
 
 aggregation:
   type: kurtosis_avg
-  params:
-    centered: false
-    confidence: 1.96
+  centered: false
+  confidence: 1.96
 
 output_dir: dpfl/results
 device: auto    # "cpu", "cuda", or "auto" (auto-detect GPU)
