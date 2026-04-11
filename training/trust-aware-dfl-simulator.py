@@ -132,10 +132,19 @@ class TrustAwareDFLSimulator:
                     if j in self.attacker_ids: fn_all += 1
                     else: tn_all += 1
 
-            self._log_round(t, updates, tp_all, fp_all, fn_all, tn_all,
-                            node_agg_metrics)
+            # Privacy accounting: max epsilon across all honest edges
+            eps_vals = [
+                self.rdp.get_epsilon(node, j)
+                for node in self.nodes.values()
+                if node.id not in self.attacker_ids
+                for j in node.neighbors
+            ]
+            max_eps = max(eps_vals) if eps_vals else 0.0
 
-    def _log_round(self, t, updates, tp, fp, fn, tn, node_agg_metrics):
+            self._log_round(t, updates, tp_all, fp_all, fn_all, tn_all,
+                            node_agg_metrics, max_eps)
+
+    def _log_round(self, t, updates, tp, fp, fn, tn, node_agg_metrics, epsilon):
         """Evaluate, compute metrics, log to tracker + console."""
         evals = self._evaluate_nodes()
         honest = {nid: v for nid, v in evals.items()
@@ -181,12 +190,14 @@ class TrustAwareDFLSimulator:
             self.tracker.log_round(
                 round_num=t, accuracy=float(acc), test_loss=float(loss),
                 precision=prec, recall=rec, f1_score=f1,
+                epsilon=epsilon,
                 trust_toward_honest=trust_h, trust_toward_attacker=trust_a,
                 **defense)
             self.tracker.log_node_round(t, nodes_data)
 
         print(f"Round {t+1:3d}/{self.config.training.n_rounds} | "
-              f"Acc: {acc:.4f} | Trust H->H: {trust_h:.3f} H->A: {trust_a:.3f}"
+              f"Acc: {acc:.4f} | eps: {epsilon:.4f} | "
+              f"Trust H->H: {trust_h:.3f} H->A: {trust_a:.3f}"
               f" | P: {prec:.2f} R: {rec:.2f} F1: {f1:.2f}")
 
     def _evaluate_nodes(self):
