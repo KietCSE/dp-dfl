@@ -17,7 +17,7 @@ from dpfl.tracking.metrics_tracker import MetricsTracker
 from dpfl.tracking.logger_setup import setup_experiment_logger
 
 
-def run_experiment(config_cls, build_fn, prefix, default_config_name):
+def run_experiment(config_cls, build_fn, prefix, default_config_name, algo_name=None):
     """Generic experiment runner.
 
     Args:
@@ -25,6 +25,7 @@ def run_experiment(config_cls, build_fn, prefix, default_config_name):
         build_fn: Callable(config, dataset_cls, model_cls, param_dim, device) -> simulator
         prefix: Output directory prefix (e.g. "dfl", "trust_d2b", "noise_game")
         default_config_name: Default YAML config filename in dpfl/ directory
+        algo_name: Algorithm key name (e.g. "trust-aware", "dpsgd-kurtosis")
     """
     config_path = sys.argv[1] if len(sys.argv) > 1 else str(
         Path(__file__).parent / default_config_name)
@@ -52,7 +53,19 @@ def run_experiment(config_cls, build_fn, prefix, default_config_name):
     # Output directory + tracker + logger
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(config.output_dir) / f"{prefix}_{timestamp}"
-    tracker = MetricsTracker(str(run_dir))
+    metadata = {
+        "algorithm": algo_name or prefix,
+        "attack_type": config.attack.type,
+        "dataset": config.dataset.name,
+        "seed": config.seed,
+        "n_nodes": config.topology.n_nodes,
+        "n_attackers": config.topology.n_attackers,
+        "noise_mult": config.dp.noise_mult,
+        "clip_bound": config.dp.clip_bound,
+        "split_mode": config.dataset.split.mode,
+        "dirichlet_alpha": config.dataset.split.alpha,
+    }
+    tracker = MetricsTracker(str(run_dir), metadata=metadata)
     shutil.copy2(config_path, run_dir / "config.yaml")
 
     logger = setup_experiment_logger(str(run_dir))

@@ -11,14 +11,15 @@ import matplotlib.pyplot as plt
 
 
 class MetricsTracker:
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, metadata: Dict[str, Any] = None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.metadata = metadata or {}
         self.rounds: List[Dict[str, Any]] = []
         self.node_rounds: List[Dict[str, Any]] = []
 
     def log_round(self, round_num: int, **metrics):
-        self.rounds.append({"round": round_num, **metrics})
+        self.rounds.append({**self.metadata, "round": round_num, **metrics})
 
     def log_node_round(self, round_num: int, nodes_data: Dict[int, Dict[str, Any]]):
         """Log per-node metrics for a single round.

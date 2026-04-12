@@ -7,3 +7,4 @@ plans/
 .env
 AGENTS.md
 .DS_Store
+results/

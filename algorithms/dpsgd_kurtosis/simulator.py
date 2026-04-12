@@ -47,11 +47,11 @@ class DFLSimulator(BaseSimulator):
                 self.accountant.step(honest_steps, q_batch, self.config.dp.noise_mult)
                 epsilon = self.accountant.get_epsilon()
 
-                if epsilon > self.config.dp.epsilon_max:
-                    logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
-                                   t + 1, self.config.training.n_rounds, epsilon)
-                    break
-
             # Step 4: Evaluate + log
             self._log_round(t, epsilon, updates, per_node_detection,
                             node_agg_metrics, total_tp, total_fp, total_fn, total_tn)
+
+            if self.accountant is not None and epsilon > self.config.dp.epsilon_max:
+                logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
+                               t + 1, self.config.training.n_rounds, epsilon)
+                break

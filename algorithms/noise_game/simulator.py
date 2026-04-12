@@ -126,11 +126,6 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 self.accountant.step(honest_steps, q_batch, effective_mult)
                 epsilon = self.accountant.get_epsilon()
 
-                if epsilon > self.config.dp.epsilon_max:
-                    logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
-                                   t + 1, self.config.training.n_rounds, epsilon)
-                    break
-
             # Phase 5: Evaluate + log
             honest_trust = [m["trust"] for m in extra_node.values()]
             self._log_round(
@@ -141,6 +136,11 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     "avg_trust": float(np.mean(honest_trust)) if honest_trust else 0.0,
                     "avg_sigma_t": self.game_mechanism.compute_annealed_sigma(t),
                 })
+
+            if self.accountant is not None and epsilon > self.config.dp.epsilon_max:
+                logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
+                               t + 1, self.config.training.n_rounds, epsilon)
+                break
 
     def _neighbor_avg_control(self, node: NoiseGameNode) -> torch.Tensor:
         """D-SCAFFOLD: approximate global control as average of neighbors' c_i."""

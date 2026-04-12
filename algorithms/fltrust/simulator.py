@@ -79,16 +79,17 @@ class FLTrustSimulator(DFLSimulator):
                         int(avg_steps), q, self.config.dp.noise_mult
                     )
                     epsilon = self.accountant.get_epsilon()
-                    if epsilon > self.config.dp.epsilon_max:
-                        logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
-                                       t + 1, self.config.training.n_rounds, epsilon)
-                        break
-
             # Phase 4: Log
             self._log_round(
                 t, epsilon, updates, per_node_det, node_agg_metrics,
                 total_tp, total_fp, total_fn, total_tn,
             )
+
+            if self.accountant and self.config.dp.noise_mode != "none" \
+                    and epsilon > self.config.dp.epsilon_max:
+                logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
+                               t + 1, self.config.training.n_rounds, epsilon)
+                break
 
     def _compute_root_gradient(self, node: Node):
         """Train on node's root data to get root gradient."""

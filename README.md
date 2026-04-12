@@ -97,16 +97,141 @@ python batch_runner.py -e EXP1 --aggregate        # Tổng hợp kết quả
 
 Mỗi run tạo `results/<prefix>_<timestamp>/`:
 
-| File | Mô tả |
+```
+results/trust_d2b_20260411_151119/
+├── metrics.csv              ← Bảng metrics mỗi round (chính, dùng cho paper)
+├── metrics.json             ← Cùng data, JSON format (dùng cho scripting)
+├── config.yaml              ← Config đã dùng cho run này
+├── report.txt               ← Tóm tắt kết quả cuối
+├── experiment.log           ← Log chi tiết quá trình chạy
+├── accuracy.png             ← Biểu đồ accuracy theo round
+├── accuracy_spread.png      ← Accuracy spread của honest nodes
+├── epsilon.png              ← Privacy budget (ε) theo round
+├── detection.png            ← Precision / Recall theo round
+└── node_data/               ← Metrics từng node từng round
+    ├── round_000.json
+    ├── round_001.json
+    └── ...
+```
+
+#### metrics.csv — File chính để collect data cho paper
+
+Mỗi row = 1 round. Gồm **metadata columns** (cố định mọi row, dùng để identify run) + **metric columns** (thay đổi mỗi round).
+
+**Metadata columns** (đầu mỗi row):
+
+| Column | Mô tả | Ví dụ |
+|---|---|---|
+| `algorithm` | Tên thuật toán (flag `-a`) | `trust-aware` |
+| `attack_type` | Loại tấn công | `scale`, `sign_flip`, `alie` |
+| `dataset` | Dataset | `mnist`, `cifar10` |
+| `seed` | Random seed | `42` |
+| `n_nodes` | Tổng nodes | `20` |
+| `n_attackers` | Số attacker | `4` |
+| `noise_mult` | DP noise multiplier | `1.1` |
+| `clip_bound` | L2-norm clip bound | `2.0` |
+| `split_mode` | Cách chia data | `iid`, `dirichlet` |
+| `dirichlet_alpha` | Dirichlet α (non-IID) | `0.5` |
+
+**Metric columns** (mỗi round):
+
+| Column | Mô tả | Dùng cho |
+|---|---|---|
+| `round` | Round number (0-indexed) | Tất cả |
+| `accuracy` | Test accuracy trung bình honest nodes | EXP-1,3,5,7 |
+| `test_loss` | Test loss trung bình honest nodes | General |
+| `epsilon` | Cumulative privacy budget ε | EXP-4,8 |
+| `precision` | Detection precision (TP/(TP+FP)) | EXP-6 |
+| `recall` | Detection recall (TP/(TP+FN)) | EXP-6 |
+| `f1_score` | Detection F1 score | EXP-6 |
+| `mean_update_norm_honest` | Norm trung bình gradient honest | Debug |
+| `mean_update_norm_attacker` | Norm trung bình gradient attacker | Debug |
+| `best_alpha` | Rényi alpha tối ưu | Debug |
+
+> **Lưu ý**: Một số algorithm ghi thêm defense-specific columns (vd: `trust_toward_honest`, `kurtosis_honest`, `tau_drop_attacker`...) tự động append vào cuối.
+
+**Cách đọc nhanh với pandas:**
+
+```python
+import pandas as pd
+
+# Load 1 run
+df = pd.read_csv("results/trust_d2b_20260411_151119/metrics.csv")
+
+# Final accuracy
+final_acc = df.iloc[-1]["accuracy"]
+
+# Convergence curve
+df.plot(x="round", y="accuracy")
+
+# Metadata
+print(df.iloc[0][["algorithm", "attack_type", "dataset", "seed"]])
+```
+
+**Gộp nhiều runs cho paper (vd: mean ± std across seeds):**
+
+```python
+import glob
+
+# Load tất cả CSV vào 1 DataFrame
+dfs = [pd.read_csv(f) for f in glob.glob("results/*/metrics.csv")]
+all_data = pd.concat(dfs, ignore_index=True)
+
+# EXP-1: Final accuracy per algorithm per attack
+final = all_data.groupby(["algorithm", "attack_type", "dataset"]).apply(
+    lambda g: g[g["round"] == g["round"].max()])
+table1 = final.groupby(["algorithm", "attack_type", "dataset"])["accuracy"].agg(["mean", "std"])
+```
+
+#### node_data/round_XXX.json — Metrics từng node
+
+Mỗi file = 1 round, chứa dict `{node_id: {...}}`:
+
+```json
+{
+  "round": 0,
+  "nodes": {
+    "0": {
+      "accuracy": 0.62,
+      "test_loss": 1.86,
+      "update_norm": 0.32,
+      "is_attacker": true,
+      "mean_trust": 0.5,
+      "tau_drop": 0.498,
+      "n_rejected": 0
+    }
+  }
+}
+```
+
+| Field | Mô tả |
 |---|---|
-| `metrics.csv` | Metrics mỗi round |
-| `metrics.json` | JSON format |
-| `accuracy.png` | Accuracy chart |
-| `epsilon.png` | Privacy budget |
-| `detection.png` | Precision / Recall |
-| `node_data/` | Per-node metrics |
-| `config.yaml` | Config đã dùng |
-| `report.txt` | Summary |
+| `accuracy` | Test accuracy riêng node đó |
+| `test_loss` | Test loss riêng node |
+| `update_norm` | L2-norm của gradient update |
+| `is_attacker` | `true` nếu node là attacker |
+
+> Fields khác (`mean_trust`, `tau_drop`, `kurtosis`...) phụ thuộc vào algorithm.
+
+#### report.txt — Tóm tắt nhanh
+
+```
+REPORT: DP-SGD Decentralized Federated Learning
+Rounds completed:           50
+Final accuracy:             0.8869
+Final epsilon:              8750747.97
+Avg precision:              1.0000
+Avg recall:                 0.0000
+Avg F1 score:               0.0000
+```
+
+#### config.yaml — Tái tạo run
+
+Bản copy chính xác config YAML đã dùng. Dùng để reproduce:
+
+```bash
+python run.py -a trust-aware results/trust_d2b_20260411_151119/config.yaml
+```
 
 ## Cấu Trúc Project
 

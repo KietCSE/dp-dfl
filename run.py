@@ -233,7 +233,8 @@ def main():
     config_path = args.config or str(Path(__file__).parent / algo["default_config"])
     sys.argv = [sys.argv[0], config_path]
 
-    run_experiment(config_cls, algo["build_fn"], algo["prefix"], algo["default_config"])
+    run_experiment(config_cls, algo["build_fn"], algo["prefix"], algo["default_config"],
+                   algo_name=args.algorithm)
 
 
 if __name__ == "__main__":
