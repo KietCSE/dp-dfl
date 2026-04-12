@@ -48,7 +48,7 @@ class Node:
                 )
             logger.debug("Node %d: model poisoning (%s)", self.id, type(attack).__name__)
             update, n_steps = trainer.train(
-                self.model, self.data, noise_mechanism, apply_noise=False
+                self.model, self.data, noise_mechanism, skip_dp=True
             )
             return attack.perturb(update, context=None), n_steps
         return trainer.train(

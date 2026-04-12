@@ -24,15 +24,19 @@ class DPSGDTrainer:
 
     def train(self, model: BaseModel, dataset: Subset,
               noise_mechanism: BaseNoiseMechanism,
-              apply_noise: bool = True) -> Tuple[torch.Tensor, int]:
+              apply_noise: bool = True,
+              skip_dp: bool = False) -> Tuple[torch.Tensor, int]:
         """
         Local training. Returns: (model_update_flat, n_steps).
         noise_mode controls when DP is applied:
           - per_step: clip+noise every batch (standard DP-SGD)
           - post_training: standard SGD, then clip+noise on final update
           - none: plain SGD, no DP
-        apply_noise=False -> clip only, no noise (for attackers).
+        skip_dp=True -> plain SGD, bypass all DP (for model poisoning attackers).
         """
+        if skip_dp:
+            return self._train_standard_sgd(model, dataset)
+
         if self.noise_mode == "per_step":
             return self._train_dpsgd_per_step(model, dataset, noise_mechanism, apply_noise)
 
