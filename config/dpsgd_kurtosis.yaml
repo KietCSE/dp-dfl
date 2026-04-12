@@ -39,7 +39,7 @@ aggregation:
   type: kurtosis_avg
   params:
     centered: false
-    confidence: 1.96
+    confidence: 2.58
 
 output_dir: ./results
 device: auto    # "cpu", "cuda", or "auto" (auto-detect GPU)

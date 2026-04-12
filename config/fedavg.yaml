@@ -10,7 +10,7 @@ model:
 
 topology:
   n_nodes: 20
-  n_attackers: 4
+  n_attackers: 0
   n_neighbors: 10
   seed: 42
 
@@ -24,9 +24,9 @@ training:
 dp:
   noise_mode: none            # No DP — plain FedAvg
 
-attack:
-  type: scale
-  scale_factor: 3.0
+# attack:
+#   type: scale
+#   scale_factor: 3.0
 
 aggregation:
   type: simple_avg            # FedAvg = simple averaging, no defense

@@ -20,13 +20,15 @@ Framework mô phỏng hệ thống **Decentralized Federated Learning** với nh
 
 ## Tấn Công Hỗ Trợ
 
-| Attack | Loại | Mô tả | Config key |
-|---|---|---|---|
-| **Scale** | Model poisoning | Nhân gradient × hệ số | `scale` |
-| **Sign Flip** | Model poisoning | Đảo dấu gradient: g → -g | `sign_flip` |
-| **Gaussian Random** | Model poisoning | Thay gradient bằng noise cùng norm | `gaussian_random` |
-| **ALIE** | Model poisoning | mean - z×std (subtle, bypass defense) | `alie` |
-| **Label Flip** | Data poisoning | Xoay label: y → (y+1) % 10 | `label_flip` |
+| Attack | Loại | Mô tả | `attack.type` | Params |
+|---|---|---|---|---|
+| **Scale** | Model poisoning | Nhân gradient × hệ số | `scale` | `scale_factor` (vd: `3.0`) |
+| **Sign Flip** | Model poisoning | Đảo dấu gradient: g → -g | `sign_flip` | — |
+| **Gaussian Random** | Model poisoning | Thay gradient bằng noise cùng norm | `gaussian_random` | — |
+| **ALIE** | Model poisoning | mean - z×std (subtle, bypass defense) | `alie` | `z_max` (vd: `1.0`) |
+| **Label Flip** | Data poisoning | Xoay label: y → (y+1) % 10 | `label_flip` | `flip_mode`: `rotate` \| `random` \| `negate` |
+
+> **Chung cho mọi attack:** `start_round` (vd: `0`) — round bắt đầu tấn công. `0` = tấn công từ đầu. Đặt `n_attackers: 0` để tắt hoàn toàn.
 
 ## Dataset & Model
 
@@ -374,10 +376,17 @@ Tự tạo file `.yaml` bằng cách chọn giá trị cho từng section:
 | Key | Giá trị | Mô tả |
 |---|---|---|
 | `type` | `scale` \| `sign_flip` \| `gaussian_random` \| `alie` \| `label_flip` | Loại tấn công |
-| `scale_factor` | `float` (vd: `3.0`) | Hệ số nhân (chỉ cho `scale`) |
-| `z_max` | `float` (vd: `1.0`) | Cường độ ALIE (chỉ cho `alie`) |
-| `flip_mode` | `rotate` \| `random` \| `negate` | Cách flip label (chỉ cho `label_flip`) |
-| `start_round` | `int` (vd: `0`) | Round bắt đầu tấn công (0 = luôn tấn công) |
+| `start_round` | `int` (vd: `0`) | Round bắt đầu tấn công (0 = luôn tấn công). Chung cho mọi attack |
+
+**Params riêng theo `type`:**
+
+| `type` | Key | Giá trị | Mô tả |
+|---|---|---|---|
+| `scale` | `scale_factor` | `float` (vd: `3.0`) | Hệ số nhân gradient |
+| `alie` | `z_max` | `float` (vd: `1.0`) | Cường độ ALIE: mean - z_max × std |
+| `label_flip` | `flip_mode` | `rotate` \| `random` \| `negate` | Cách flip label |
+| `sign_flip` | — | — | Không có param riêng |
+| `gaussian_random` | — | — | Không có param riêng |
 
 ### `aggregation` — Chọn aggregator
 
