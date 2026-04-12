@@ -26,7 +26,7 @@ dp:
   clip_bound: 2.0 # used by NoiseGameMechanism
   delta: 1.0e-5 # used by NoiseGameMechanism + accountant
   epsilon_max: 10.0 # used by NoiseGameMechanism
-  accountant: renyi_dpsgd # used for RDP accounting
+#  accountant: renyi_dpsgd # used for RDP accounting
   accountant_params:
     alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
 
