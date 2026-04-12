@@ -22,12 +22,9 @@ training:
   n_workers: 1
 
 dp:
-  noise_mode: per_step
-  clip_bound: 2.0
-  noise_mult: 1.1
-  delta: 1.0e-5
-  epsilon_max: 10.0
-  accountant: renyi_dpsgd
+  noise_mode: none            # trust-aware self-manages per-neighbor bounded Gaussian noise
+  delta: 1.0e-5               # used by PerNeighborRDPAccountant
+  epsilon_max: 10.0           # used by PerNeighborRDPAccountant
   accountant_params:
     alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
 

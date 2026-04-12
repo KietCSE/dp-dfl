@@ -22,12 +22,11 @@ training:
   n_workers: 1
 
 dp:
-  noise_mode: none            # noise-game handles all noise injection
-  clip_bound: 2.0
-  noise_mult: 1.1             # used for RDP accounting reference
-  delta: 1.0e-5
-  epsilon_max: 10.0
-  accountant: renyi_dpsgd
+  noise_mode: none            # noise-game self-manages strategic noise injection
+  clip_bound: 2.0             # used by NoiseGameMechanism
+  delta: 1.0e-5               # used by NoiseGameMechanism + accountant
+  epsilon_max: 10.0           # used by NoiseGameMechanism
+  accountant: renyi_dpsgd     # used for RDP accounting
   accountant_params:
     alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
 
@@ -51,6 +50,9 @@ noise_game:
   scaffold: true              # SCAFFOLD variance reduction
   two_track: true             # two-track model (clean + robust)
   two_track_lambda: 0.7       # clean model weight
+  beta_strat: 0.5             # strategic/DP noise coupling ratio
+  sigma_total: 3.0            # total noise energy cap
+  nsr_warn: 5.0               # NSR warning threshold
 
 output_dir: results
 seed: 42

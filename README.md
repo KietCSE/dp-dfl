@@ -4,17 +4,19 @@ Framework mô phỏng hệ thống **Decentralized Federated Learning** với nh
 
 ## Thuật Toán Hỗ Trợ
 
-| Algorithm | Defense | DP | Chạy |
-|---|---|---|---|
-| **FedAvg** | Không | Không | `python run.py -a fedavg` |
-| **DP-FedAvg** | Không | Gaussian DP-SGD | `python run.py -a dp-fedavg` |
-| **Krum** | Distance-based Byzantine filtering | Không | `python run.py -a krum` |
-| **Trimmed Mean** | Coordinate-wise trim top/bottom | Không | `python run.py -a trimmed-mean` |
-| **FLTrust** | Cosine trust scoring via root data | Không | `python run.py -a fltrust` |
-| **FLAME** | Clustering + adaptive clipping | DP noise (self-managed) | `python run.py -a flame` |
-| **DP-SGD + Kurtosis** | Kurtosis excess filtering | Gaussian DP-SGD | `python run.py -a dpsgd-kurtosis` |
-| **Trust-Aware D2B-DP** | Z-Score + Cosine + MAD + Trust | Per-edge bounded Gaussian | `python run.py -a trust-aware` |
-| **Noise Game** | Strategic directional + orthogonal + spectral noise | Annealed RDP | `python run.py -a noise-game` |
+| Algorithm | Defense | DP | noise_mode | Chạy |
+|---|---|---|---|---|
+| **FedAvg** | Không | Không | `none` | `python run.py -a fedavg` |
+| **DP-FedAvg** | Không | Gaussian DP-SGD | `per_step` | `python run.py -a dp-fedavg` |
+| **Krum** | Distance-based Byzantine filtering | Không | `none` | `python run.py -a krum` |
+| **Trimmed Mean** | Coordinate-wise trim top/bottom | Không | `none` | `python run.py -a trimmed-mean` |
+| **FLTrust** | Cosine trust scoring via root data | Không | `none` | `python run.py -a fltrust` |
+| **FLAME** | Clustering + adaptive clipping | Gaussian (self-managed) | `none` | `python run.py -a flame` |
+| **DP-SGD + Kurtosis** | Kurtosis excess filtering | Gaussian DP-SGD | `per_step` | `python run.py -a dpsgd-kurtosis` |
+| **Trust-Aware D2B-DP** | Z-Score + Cosine + MAD + Trust | Per-edge bounded Gaussian (self-managed) | `none` | `python run.py -a trust-aware` |
+| **Noise Game** | Strategic directional + orthogonal + spectral noise | Annealed RDP (self-managed) | `none` | `python run.py -a noise-game` |
+
+> **Ghi chú DP:** `per_step` = DP-SGD inject noise mỗi training step qua `DPSGDTrainer`. `none` + self-managed = thuật toán tự quản lý noise riêng (không qua `dp:` config section).
 
 ## Tấn Công Hỗ Trợ
 
@@ -80,7 +82,7 @@ python batch_runner.py -e EXP1 --aggregate        # Tổng hợp kết quả
 | `config/trimmed_mean.yaml` | Trimmed Mean | none | trimmed_mean |
 | `config/fltrust.yaml` | FLTrust | none | fltrust |
 | `config/flame.yaml` | FLAME | none (self-managed) | flame |
-| `config/trust_aware.yaml` | Trust-Aware D2B-DP | per_step | trust_aware_d2b |
+| `config/trust_aware.yaml` | Trust-Aware D2B-DP | none (self-managed) | trust_aware_d2b |
 | `config/noise_game.yaml` | Noise Game | none (self-managed) | simple_avg |
 
 ### CIFAR-10
@@ -355,15 +357,17 @@ Tự tạo file `.yaml` bằng cách chọn giá trị cho từng section:
 
 ### `dp` — Differential Privacy
 
-| Key | Giá trị | Mô tả |
-|---|---|---|
-| `noise_mode` | `per_step` \| `post_training` \| `none` | Khi nào inject noise. `none` = tắt DP |
-| `clip_bound` | `float` (vd: `2.0`) | L2-norm clipping bound |
-| `noise_mult` | `float` (vd: `1.1`) | Noise multiplier (σ = noise_mult × clip_bound) |
-| `delta` | `float` (vd: `1e-5`) | DP delta parameter |
-| `epsilon_max` | `float` (vd: `10.0`) | Budget tối đa, dừng khi vượt |
-| `accountant` | `renyi_dpsgd` | Privacy accountant |
-| `accountant_params.alpha_list` | `list[float]` | Rényi alpha values |
+| Key | Giá trị | Mô tả | Dùng bởi |
+|---|---|---|---|
+| `noise_mode` | `per_step` \| `post_training` \| `none` | Khi nào inject noise. `none` = tắt DP hoặc self-managed | Tất cả |
+| `clip_bound` | `float` (vd: `2.0`) | L2-norm clipping bound | DP-SGD (`per_step`/`post_training`), Noise Game |
+| `noise_mult` | `float` (vd: `1.1`) | Noise multiplier (σ = noise_mult × clip_bound) | DP-SGD (`per_step`/`post_training`) only |
+| `delta` | `float` (vd: `1e-5`) | DP delta parameter | DP-SGD, Trust-Aware, Noise Game |
+| `epsilon_max` | `float` (vd: `10.0`) | Budget tối đa, dừng khi vượt | DP-SGD, Trust-Aware, Noise Game |
+| `accountant` | `renyi_dpsgd` | Privacy accountant | DP-SGD, Noise Game |
+| `accountant_params.alpha_list` | `list[float]` | Rényi alpha values | DP-SGD, Trust-Aware, Noise Game |
+
+> **Self-managed DP:** FLAME dùng `aggregation.params` cho noise config. Trust-Aware dùng `trust:` section + `dp.delta/epsilon_max/accountant_params`. Noise Game dùng `noise_game:` section + `dp.clip_bound/delta/epsilon_max/accountant`.
 
 ### `attack` — Chọn tấn công
 

@@ -121,7 +121,10 @@ def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device)
     game_mechanism = NoiseGameMechanism(
         alpha_attack=ng.alpha_attack, sigma_0=ng.sigma_0,
         anneal_kappa=ng.anneal_kappa, svd_rank=ng.svd_rank,
-        svd_reshape_k=ng.svd_reshape_k)
+        svd_reshape_k=ng.svd_reshape_k,
+        clip_bound=config.dp.clip_bound, delta=config.dp.delta,
+        epsilon_max=config.dp.epsilon_max,
+        beta_strat=ng.beta_strat, sigma_total=ng.sigma_total)
     alpha_list = config.dp.accountant_params.get(
         "alpha_list", [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100])
     accountant = ACCOUNTANTS[config.dp.accountant](

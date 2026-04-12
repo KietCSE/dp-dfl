@@ -53,6 +53,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
             # Phase 2: Noise-game pipeline (honest nodes only)
             final_updates = {}
             extra_node = {}
+            sigma_dps = {}
             for nid, node in self.nodes.items():
                 g = clipped[nid]
                 if node.is_attacker:
@@ -64,10 +65,15 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     global_c = self._neighbor_avg_control(node)
                     g = node.apply_scaffold(g, global_c)
 
-                # Strategic noise injection
+                # 4-layer noise injection (DP + strategic)
                 noise, metrics = self.game_mechanism.compute_total_noise(
                     g, node.prev_gradient, round_t=t)
                 g_hat = g + noise
+
+                # NSR warning
+                if metrics.get("nsr", 0) > self.ng.nsr_warn:
+                    logger.warning("Node %d round %d: NSR=%.2f exceeds %.1f",
+                                   nid, t, metrics["nsr"], self.ng.nsr_warn)
 
                 # Gradient alignment filtering
                 if not node.check_alignment(g_hat):
@@ -86,9 +92,12 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 if self.ng.scaffold:
                     node.update_control_variate(clipped[nid])
 
+                sigma_dps[nid] = metrics["sigma_dp"]
                 extra_node[nid] = {
                     "trust": metrics["trust"],
                     "noise_norm": metrics["total_noise_norm"],
+                    "nsr": metrics["nsr"],
+                    "sigma_dp": metrics["sigma_dp"],
                 }
 
             # Phase 3: Aggregation
@@ -121,20 +130,23 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     s for nid, s in all_steps.items() if nid not in self.attacker_ids)
                 q_batch = self.config.training.batch_size / self.nodes[
                     self.config.topology.n_attackers].n_samples
-                sigma_t = self.game_mechanism.compute_annealed_sigma(t)
-                effective_mult = max(sigma_t / (C + 1e-12), 0.01)
+                avg_sigma_dp = (np.mean(list(sigma_dps.values()))
+                                if sigma_dps else self.game_mechanism.sigma_0)
+                effective_mult = max(avg_sigma_dp / (C + 1e-12), 0.01)
                 self.accountant.step(honest_steps, q_batch, effective_mult)
                 epsilon = self.accountant.get_epsilon()
 
             # Phase 5: Evaluate + log
             honest_trust = [m["trust"] for m in extra_node.values()]
+            honest_nsr = [m["nsr"] for m in extra_node.values()]
             self._log_round(
                 t, epsilon, final_updates, per_node_detection, node_agg_metrics,
                 total_tp, total_fp, total_fn, total_tn,
                 extra_node_data=extra_node,
                 extra_round_metrics={
                     "avg_trust": float(np.mean(honest_trust)) if honest_trust else 0.0,
-                    "avg_sigma_t": self.game_mechanism.compute_annealed_sigma(t),
+                    "avg_sigma_dp": float(avg_sigma_dp) if sigma_dps else 0.0,
+                    "avg_nsr": float(np.mean(honest_nsr)) if honest_nsr else 0.0,
                 })
 
             if self.accountant is not None and epsilon > self.config.dp.epsilon_max:

@@ -163,6 +163,9 @@ class NoiseGameConfig:
     scaffold: bool = True
     two_track: bool = True
     two_track_lambda: float = 0.7
+    beta_strat: float = 0.5      # sigma_strat = beta * sigma_DP coupling
+    sigma_total: float = 3.0     # total noise energy cap
+    nsr_warn: float = 5.0        # NSR warning threshold
 
 @dataclass
 class NoiseGameExperimentConfig(BaseExperimentConfig):

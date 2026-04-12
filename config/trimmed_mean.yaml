@@ -22,12 +22,7 @@ training:
   n_workers: 5
 
 dp:
-  noise_mode: none
-  clip_bound: 2.0
-  noise_mult: 1.1
-  delta: 1.0e-5
-  epsilon_max: 10.0
-  accountant: renyi_dpsgd
+  noise_mode: none            # No DP — Trimmed Mean defense only
 
 attack:
   type: scale
