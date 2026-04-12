@@ -81,7 +81,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
 
                 # EMA denoising + Momentum
                 node.update_ema(g_hat)
-                m = node.update_momentum(g_hat)
+                m = node.update_momentum(node.ema_gradient)
 
                 # Trust-aware LR scaling
                 trust = metrics["trust"]

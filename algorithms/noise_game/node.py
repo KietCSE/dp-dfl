@@ -60,10 +60,10 @@ class NoiseGameNode(Node):
 
     # -- Momentum --
 
-    def update_momentum(self, noised_grad: torch.Tensor) -> torch.Tensor:
-        """Momentum update: m = beta * m + (1-beta) * g_hat."""
+    def update_momentum(self, smoothed_grad: torch.Tensor) -> torch.Tensor:
+        """Momentum update: m = beta * m + (1-beta) * \tilde{g}_t (EMA-smoothed gradient)."""
         beta = self.ng.momentum_beta
-        self.momentum = beta * self.momentum + (1.0 - beta) * noised_grad
+        self.momentum = beta * self.momentum + (1.0 - beta) * smoothed_grad
         return self.momentum
 
     # -- EMA denoising --

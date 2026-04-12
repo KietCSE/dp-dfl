@@ -24,7 +24,7 @@ class NoiseGameMechanism:
     def __init__(self, alpha_attack: float, sigma_0: float,
                  anneal_kappa: float, svd_rank: int, svd_reshape_k: int,
                  clip_bound: float, delta: float, epsilon_max: float,
-                 beta_strat: float, sigma_total: float):
+                 beta_strat: float, sigma_total: float, alpha_rd: float = 2.0):
         self.alpha_attack = alpha_attack
         self.sigma_0 = sigma_0
         self.anneal_kappa = anneal_kappa
@@ -36,6 +36,7 @@ class NoiseGameMechanism:
         self.epsilon_max = epsilon_max
         self.beta_strat = beta_strat
         self.sigma_total = sigma_total
+        self.alpha_rd = alpha_rd
         # Internal RDP budget tracker (heuristic for adaptive scheduler)
         self.epsilon_spent = 0.0
         # DP sigma floor: minimum sigma for (eps_max, delta)-DP
@@ -52,7 +53,8 @@ class NoiseGameMechanism:
         Returns sigma_DP >= sigma_floor (DP guarantee).
         """
         base = self.sigma_0 * math.exp(-self.anneal_kappa * round_t)
-        budget_factor = max(0.1, 1.0 - self.epsilon_spent / self.epsilon_max)
+        eps_remain = max(0.0, self.epsilon_max - self.epsilon_spent)
+        budget_factor = max(0.05, eps_remain / self.epsilon_max)
         threat_factor = 1.0 + attack_signal
         return max(base * budget_factor * threat_factor, self._sigma_floor)
 
@@ -173,9 +175,12 @@ class NoiseGameMechanism:
         g_norm = gradient.norm().item()
         nsr = total_noise.norm().item() / (g_norm + 1e-12)
 
-        # Track approximate RDP cost (alpha=2 heuristic for scheduler)
+        # Track approximate RDP cost using fixed Renyi order and clipping bound.
+        # After clipping, sensitivity is C = clip_bound, so
+        # epsilon_t(alpha) = alpha * C^2 / (2 * sigma_dp^2).
         if sigma_dp > 1e-12:
-            self.epsilon_spent += (self.clip_bound ** 2) / (2.0 * sigma_dp ** 2)
+            self.epsilon_spent += self.alpha_rd * self.clip_bound ** 2 / (
+                2.0 * sigma_dp ** 2)
 
         metrics = {
             "trust": trust,

@@ -165,6 +165,7 @@ class NoiseGameConfig:
     two_track_lambda: float = 0.7
     beta_strat: float = 0.5      # sigma_strat = beta * sigma_DP coupling
     sigma_total: float = 3.0     # total noise energy cap
+    rdp_alpha: float = 2.0       # Renyi order for internal budget tracking
     nsr_warn: float = 5.0        # NSR warning threshold
 
 @dataclass

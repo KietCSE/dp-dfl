@@ -22,11 +22,11 @@ training:
   n_workers: 1
 
 dp:
-  noise_mode: none            # noise-game self-manages strategic noise injection
-  clip_bound: 2.0             # used by NoiseGameMechanism
-  delta: 1.0e-5               # used by NoiseGameMechanism + accountant
-  epsilon_max: 10.0           # used by NoiseGameMechanism
-  accountant: renyi_dpsgd     # used for RDP accounting
+  noise_mode: none # noise-game self-manages strategic noise injection
+  clip_bound: 2.0 # used by NoiseGameMechanism
+  delta: 1.0e-5 # used by NoiseGameMechanism + accountant
+  epsilon_max: 10.0 # used by NoiseGameMechanism
+  accountant: renyi_dpsgd # used for RDP accounting
   accountant_params:
     alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
 
@@ -53,6 +53,7 @@ noise_game:
   two_track_lambda: 0.7
   beta_strat: 0.5
   sigma_total: 3.0
+  rdp_alpha: 2.0
   nsr_warn: 5.0
 
 output_dir: ./results
