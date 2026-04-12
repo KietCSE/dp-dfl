@@ -1,6 +1,7 @@
 """Base DFL simulator: shared setup, evaluation, detection, logging."""
 
 import copy
+import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from math import prod
@@ -10,6 +11,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+
+logger = logging.getLogger(__name__)
 
 from dpfl.config import BaseExperimentConfig
 from dpfl.data.base_dataset import BaseDataset
@@ -79,8 +82,21 @@ class BaseSimulator(ABC):
             node.neighbors = self.topology[i]
             self.nodes[i] = node
 
+        # Apply data poisoning (LabelFlip) to attacker nodes
+        if self.attack and hasattr(self.attack, 'wrap_dataset'):
+            for node in self.nodes.values():
+                if node.is_attacker:
+                    node.apply_data_attack(self.attack)
+
         self.trainer = DPSGDTrainer(self.config.training, self.config.dp, self.device)
         self.test_loader = DataLoader(test_ds, batch_size=256, shuffle=False)
+
+        logger.info("Setup complete: %d nodes (%d attackers), param_dim=%d, split=%s",
+                     self.config.topology.n_nodes, len(self.attacker_ids),
+                     self.param_dim, self.config.dataset.split.mode)
+        logger.debug("Attacker IDs: %s", self.attacker_ids)
+        if self.attack and hasattr(self.attack, 'wrap_dataset'):
+            logger.info("Data poisoning active: %s", type(self.attack).__name__)
 
     @abstractmethod
     def _create_node(self, node_id, model, data, is_attacker) -> Node:
@@ -114,6 +130,21 @@ class BaseSimulator(ABC):
             for node in self.nodes.values():
                 nid, upd, n = _train(node)
                 updates[nid] = upd; steps[nid] = n
+
+        # ALIE post-pass: re-perturb attacker updates with neighbor context
+        if attack_active and self.attack is not None:
+            from dpfl.core.alie_attack import ALIEAttack
+            if isinstance(self.attack, ALIEAttack):
+                for node in self.nodes.values():
+                    if node.is_attacker and node.id in updates:
+                        nbr_updates = {
+                            nid: updates[nid] for nid in node.neighbors
+                            if nid in updates and nid not in self.attacker_ids
+                        }
+                        context = {"neighbor_updates": nbr_updates}
+                        updates[node.id] = self.attack.perturb(
+                            updates[node.id], context=context)
+
         return updates, steps
 
     def _evaluate_nodes(self) -> Dict[int, Dict[str, float]]:
@@ -210,7 +241,13 @@ class BaseSimulator(ABC):
             self.tracker.log_round(**round_metrics)
             self.tracker.log_node_round(t, nodes_data)
 
-        print(
+        round_msg = (
             f"Round {t + 1:3d}/{self.config.training.n_rounds} | "
             f"Acc: {accuracy:.4f} | Loss: {test_loss:.4f} | "
             f"eps: {epsilon:.2f} | P: {precision:.2f} R: {recall:.2f} F1: {f1:.2f}")
+        logger.info(round_msg)
+
+        # Debug: per-node norms
+        logger.debug("Update norms — honest: %s, attacker: %s",
+                      [f"{n:.2f}" for n in honest_norms[:5]],
+                      [f"{n:.2f}" for n in attacker_norms[:5]])

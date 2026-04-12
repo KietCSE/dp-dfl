@@ -62,6 +62,8 @@ class AttackConfig:
     type: str = "scale"
     scale_factor: float = 3.0
     start_round: int = 0  # round to start attacking (0 = always attack)
+    z_max: float = 1.0           # ALIE z_max parameter
+    flip_mode: str = "rotate"    # LabelFlip mode: rotate|random|negate
 
 @dataclass
 class AggregationConfig:
@@ -133,6 +135,18 @@ class TrustConfig:
 class TrustAwareExperimentConfig(BaseExperimentConfig):
     """Extends base with trust section for D2B-DP."""
     trust: TrustConfig = field(default_factory=TrustConfig)
+
+
+@dataclass
+class FLTrustConfig:
+    """Hyperparameters for FLTrust algorithm."""
+    root_data_ratio: float = 0.1
+    trust_threshold: float = 0.1
+
+@dataclass
+class FLTrustExperimentConfig(BaseExperimentConfig):
+    """Extends base with FLTrust section."""
+    fltrust: FLTrustConfig = field(default_factory=FLTrustConfig)
 
 
 @dataclass

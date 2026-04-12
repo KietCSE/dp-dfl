@@ -1,0 +1,46 @@
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    alpha: 0.5
+
+model:
+  name: mlp
+  hidden_size: 100
+
+topology:
+  n_nodes: 20
+  n_attackers: 4
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 100
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 1
+
+dp:
+  noise_mode: none
+  clip_bound: 2.0
+  noise_mult: 1.1
+  delta: 1.0e-5
+  epsilon_max: 10.0
+  accountant: renyi_dpsgd
+
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 0
+
+aggregation:
+  type: fltrust
+  params:
+    trust_threshold: 0.1
+
+fltrust:
+  root_data_ratio: 0.1
+
+output_dir: ./results
+seed: 42

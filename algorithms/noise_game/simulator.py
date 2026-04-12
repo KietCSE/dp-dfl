@@ -1,10 +1,14 @@
 """Noise-game DFL simulator: orchestrates the full strategic noise algorithm."""
 
+import logging
+
 import numpy as np
 import torch
 
 from dpfl.core.base_simulator import BaseSimulator
 from dpfl.algorithms.noise_game.node import NoiseGameNode
+
+logger = logging.getLogger(__name__)
 
 
 class NoiseGameDFLSimulator(BaseSimulator):
@@ -123,7 +127,8 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 epsilon = self.accountant.get_epsilon()
 
                 if epsilon > self.config.dp.epsilon_max:
-                    print(f"Round {t + 1}: Budget exceeded (eps={epsilon:.2f})")
+                    logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
+                                   t + 1, self.config.training.n_rounds, epsilon)
                     break
 
             # Phase 5: Evaluate + log

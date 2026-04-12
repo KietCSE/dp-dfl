@@ -1,0 +1,15 @@
+============================================================
+REPORT: DP-SGD Decentralized Federated Learning
+============================================================
+Timestamp:                  20260412_110829
+Rounds completed:           3
+Final accuracy:             0.8170
+Final test loss:            0.5899
+Final epsilon:              0.00
+Best alpha:                 None
+Avg precision:              1.0000
+Avg recall:                 0.8000
+Avg F1 score:               0.8824
+Avg update norm (honest):   0.5504
+Avg update norm (attacker): 1.7273
+============================================================

@@ -1,0 +1,95 @@
+{
+  "round": 0,
+  "nodes": {
+    "0": {
+      "accuracy": 0.7535,
+      "test_loss": 0.7534669707298279,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "update_norm": 3.147132158279419,
+      "is_attacker": true
+    },
+    "1": {
+      "accuracy": 0.7516,
+      "test_loss": 0.7504817987442016,
+      "precision": 1.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "update_norm": 3.1744778156280518,
+      "is_attacker": true
+    },
+    "2": {
+      "accuracy": 0.7563,
+      "test_loss": 0.7331468049049378,
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1_score": 0.6666666666666666,
+      "update_norm": 1.0520596504211426,
+      "is_attacker": false
+    },
+    "3": {
+      "accuracy": 0.7816,
+      "test_loss": 0.6742908636569976,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "update_norm": 1.0507707595825195,
+      "is_attacker": false
+    },
+    "4": {
+      "accuracy": 0.786,
+      "test_loss": 0.6615600527286529,
+      "precision": 1.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "update_norm": 1.0462449789047241,
+      "is_attacker": false
+    },
+    "5": {
+      "accuracy": 0.787,
+      "test_loss": 0.653416350364685,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "update_norm": 1.0455653667449951,
+      "is_attacker": false
+    },
+    "6": {
+      "accuracy": 0.7799,
+      "test_loss": 0.6658500617027283,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "update_norm": 1.0468519926071167,
+      "is_attacker": false
+    },
+    "7": {
+      "accuracy": 0.7669,
+      "test_loss": 0.6781031342506408,
+      "precision": 1.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "update_norm": 1.0476242303848267,
+      "is_attacker": false
+    },
+    "8": {
+      "accuracy": 0.7695,
+      "test_loss": 0.6959241062164306,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "update_norm": 1.051810383796692,
+      "is_attacker": false
+    },
+    "9": {
+      "accuracy": 0.758,
+      "test_loss": 0.7292950930595398,
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1_score": 0.6666666666666666,
+      "update_norm": 1.0462294816970825,
+      "is_attacker": false
+    }
+  }
+}

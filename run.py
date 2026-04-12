@@ -13,19 +13,55 @@ from pathlib import Path
 # Add parent dir to sys.path so 'import dpfl' works
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Force registry population
+# Force registry population — datasets, models, attacks, aggregators
 import dpfl.data.mnist_dataset  # noqa: F401
+import dpfl.data.cifar10_dataset  # noqa: F401
 import dpfl.models.mlp_model  # noqa: F401
+import dpfl.models.cnn_model  # noqa: F401
 import dpfl.core.gaussian_mechanism  # noqa: F401
 import dpfl.core.scale_attack  # noqa: F401
+import dpfl.core.sign_flip_attack  # noqa: F401
+import dpfl.core.gaussian_random_attack  # noqa: F401
+import dpfl.core.alie_attack  # noqa: F401
+import dpfl.core.label_flip_attack  # noqa: F401
 import dpfl.core.renyi_accountant  # noqa: F401
 import dpfl.algorithms.dpsgd_kurtosis.kurtosis_aggregator  # noqa: F401
 import dpfl.algorithms.noise_game.simple_avg_aggregator  # noqa: F401
 import dpfl.algorithms.trust_aware.aggregator  # noqa: F401
 import dpfl.algorithms.krum.krum_aggregator  # noqa: F401
+import dpfl.algorithms.trimmed_mean.trimmed_mean_aggregator  # noqa: F401
+import dpfl.algorithms.fltrust.fltrust_aggregator  # noqa: F401
+import dpfl.algorithms.flame.flame_aggregator  # noqa: F401
 
-from dpfl.registry import NOISE_MECHANISMS, AGGREGATORS, ATTACKS, ACCOUNTANTS
+from dpfl.registry import DATASETS, NOISE_MECHANISMS, AGGREGATORS, ATTACKS, ACCOUNTANTS
 from dpfl.experiment_runner import run_experiment
+
+
+# -- Shared helpers --
+
+def _build_attack(config):
+    """Build attack instance from config, handling type-specific params."""
+    attack_cls = ATTACKS.get(config.attack.type)
+    if attack_cls is None:
+        raise ValueError(f"Unknown attack type: {config.attack.type}")
+    atype = config.attack.type
+    if atype == "scale":
+        return attack_cls(scale_factor=config.attack.scale_factor)
+    elif atype == "alie":
+        return attack_cls(z_max=config.attack.z_max)
+    elif atype == "label_flip":
+        ds_cls = DATASETS[config.dataset.name]
+        num_classes = ds_cls().num_classes
+        return attack_cls(num_classes=num_classes, flip_mode=config.attack.flip_mode)
+    else:
+        # sign_flip, gaussian_random — no extra params
+        return attack_cls()
+
+
+def _build_accountant(config):
+    """Build privacy accountant from config."""
+    return ACCOUNTANTS[config.dp.accountant](
+        delta=config.dp.delta, **config.dp.accountant_params)
 
 
 # -- Build functions per algorithm --
@@ -33,13 +69,12 @@ from dpfl.experiment_runner import run_experiment
 def build_dpsgd_kurtosis(config, dataset_cls, model_cls, param_dim, tracker, device):
     from dpfl.algorithms.dpsgd_kurtosis.simulator import DFLSimulator
     noise_mechanism = NOISE_MECHANISMS["gaussian"]()
-    attack = ATTACKS[config.attack.type](scale_factor=config.attack.scale_factor)
+    attack = _build_attack(config)
     aggregator = AGGREGATORS[config.aggregation.type](
         param_dim=param_dim, **config.aggregation.params)
     accountant = None
     if config.dp.noise_mode != "none":
-        accountant = ACCOUNTANTS[config.dp.accountant](
-            delta=config.dp.delta, **config.dp.accountant_params)
+        accountant = _build_accountant(config)
     return DFLSimulator(
         config, dataset_cls, model_cls,
         noise_mechanism, aggregator, attack,
@@ -52,7 +87,7 @@ def build_trust_aware(config, dataset_cls, model_cls, param_dim, tracker, device
     from dpfl.algorithms.trust_aware.bounded_gaussian import BoundedGaussianMechanism
     from dpfl.algorithms.trust_aware.per_neighbor_accountant import PerNeighborRDPAccountant
     noise_mechanism = NOISE_MECHANISMS["gaussian"]()
-    attack = ATTACKS[config.attack.type](scale_factor=config.attack.scale_factor)
+    attack = _build_attack(config)
     aggregator = AGGREGATORS["trust_aware_d2b"](
         param_dim=param_dim,
         ema_lambda=config.trust.ema_lambda,
@@ -79,7 +114,7 @@ def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device)
     from dpfl.algorithms.noise_game.mechanism import NoiseGameMechanism
     from dpfl.core.gaussian_mechanism import GaussianMechanism
     noise_mechanism = GaussianMechanism()
-    attack = ATTACKS[config.attack.type](scale_factor=config.attack.scale_factor)
+    attack = _build_attack(config)
     aggregator = AGGREGATORS[config.aggregation.type](
         param_dim=param_dim, **config.aggregation.params)
     ng = config.noise_game
@@ -97,9 +132,26 @@ def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device)
         accountant=accountant, tracker=tracker, device=device)
 
 
-# FedAvg and Krum reuse same simulator (DFLSimulator), only aggregator differs via config
+# FedAvg, Krum, DP-FedAvg, Trimmed Mean, FLAME reuse DFLSimulator
 build_fedavg = build_dpsgd_kurtosis
 build_krum = build_dpsgd_kurtosis
+build_dp_fedavg = build_dpsgd_kurtosis
+build_trimmed_mean = build_dpsgd_kurtosis
+build_flame = build_dpsgd_kurtosis
+
+
+def build_fltrust(config, dataset_cls, model_cls, param_dim, tracker, device):
+    from dpfl.algorithms.fltrust.simulator import FLTrustSimulator
+    noise_mechanism = NOISE_MECHANISMS["gaussian"]() if config.dp.noise_mode != "none" else None
+    attack = _build_attack(config)
+    aggregator = AGGREGATORS["fltrust"](**config.aggregation.params)
+    accountant = _build_accountant(config) if config.dp.noise_mode != "none" else None
+    return FLTrustSimulator(
+        config, dataset_cls, model_cls,
+        noise_mechanism, aggregator, attack,
+        accountant=accountant, tracker=tracker, device=device,
+        root_data_ratio=config.fltrust.root_data_ratio,
+    )
 
 
 # -- Algorithm registry --
@@ -134,6 +186,30 @@ ALGORITHMS = {
         "build_fn": build_noise_game,
         "prefix": "noise_game",
         "default_config": "config/noise_game.yaml",
+    },
+    "dp-fedavg": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_dp_fedavg,
+        "prefix": "dp_fedavg",
+        "default_config": "config/dp_fedavg.yaml",
+    },
+    "trimmed-mean": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_trimmed_mean,
+        "prefix": "trimmed_mean",
+        "default_config": "config/trimmed_mean.yaml",
+    },
+    "fltrust": {
+        "config_cls": "dpfl.config.FLTrustExperimentConfig",
+        "build_fn": build_fltrust,
+        "prefix": "fltrust",
+        "default_config": "config/fltrust.yaml",
+    },
+    "flame": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_flame,
+        "prefix": "flame",
+        "default_config": "config/flame.yaml",
     },
 }
 

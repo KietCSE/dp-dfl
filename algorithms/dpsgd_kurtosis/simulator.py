@@ -1,7 +1,11 @@
 """Standard DFL simulator: DP-SGD + Kurtosis defense."""
 
+import logging
+
 from dpfl.core.base_simulator import BaseSimulator
 from dpfl.core.base_node import Node
+
+logger = logging.getLogger(__name__)
 
 
 class DFLSimulator(BaseSimulator):
@@ -44,7 +48,8 @@ class DFLSimulator(BaseSimulator):
                 epsilon = self.accountant.get_epsilon()
 
                 if epsilon > self.config.dp.epsilon_max:
-                    print(f"Round {t + 1}: Budget exceeded (eps={epsilon:.2f})")
+                    logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
+                                   t + 1, self.config.training.n_rounds, epsilon)
                     break
 
             # Step 4: Evaluate + log
