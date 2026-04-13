@@ -32,7 +32,7 @@ dp:
 
 attack:
   type: scale
-  scale_factor: 3.0
+  scale_factor: -5.0
 
 aggregation:
   type: krum

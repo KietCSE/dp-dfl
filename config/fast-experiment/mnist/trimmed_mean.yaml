@@ -1,0 +1,39 @@
+dataset:
+  name: mnist
+  split:
+    mode: dirichlet
+    alpha: 0.3            # non-IID — harder setting
+
+model:
+  name: mlp
+  hidden_size: 100
+
+topology:
+  n_nodes: 20
+  n_attackers: 8          # 40% Byzantine
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 150
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: none        # No DP — Trimmed Mean defense only
+
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
+
+aggregation:
+  type: trimmed_mean
+  params:
+    trim_ratio: 0.2
+
+output_dir: ./results
+device: auto
+seed: 42

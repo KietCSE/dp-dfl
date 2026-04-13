@@ -1,0 +1,40 @@
+dataset:
+  name: cifar10
+  split:
+    mode: iid
+
+model:
+  name: cnn
+  hidden_size: 128
+
+topology:
+  n_nodes: 20
+  n_attackers: 8          # 40% Byzantine
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 100
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: none        # FLAME self-manages DP noise via aggregation.params
+
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
+
+aggregation:
+  type: flame
+  params:
+    noise_mult: 0.01
+    delta: 1.0e-5
+    min_cluster_size: 2
+
+output_dir: ./results
+device: auto
+seed: 42

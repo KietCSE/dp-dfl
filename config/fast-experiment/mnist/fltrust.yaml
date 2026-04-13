@@ -1,0 +1,42 @@
+dataset:
+  name: mnist
+  split:
+    mode: dirichlet
+    alpha: 0.3            # non-IID — harder setting
+
+model:
+  name: mlp
+  hidden_size: 100
+
+topology:
+  n_nodes: 20
+  n_attackers: 8          # 40% Byzantine
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 150
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 1
+
+dp:
+  noise_mode: none        # No DP — FLTrust defense only
+
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
+
+aggregation:
+  type: fltrust
+  params:
+    trust_threshold: 0.1
+
+fltrust:
+  root_data_ratio: 0.1
+
+output_dir: ./results
+device: auto
+seed: 42

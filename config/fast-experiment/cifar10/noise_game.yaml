@@ -1,0 +1,60 @@
+dataset:
+  name: cifar10
+  split:
+    mode: iid
+
+model:
+  name: cnn
+  hidden_size: 128
+
+topology:
+  n_nodes: 20
+  n_attackers: 8          # 40% Byzantine
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 100
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 1
+
+dp:
+  noise_mode: none        # noise-game self-manages strategic noise injection
+  clip_bound: 2.0
+  delta: 1.0e-5
+  epsilon_max: 100000000.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
+
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
+
+aggregation:
+  type: simple_avg
+  params: {}
+
+noise_game:
+  alpha_attack: 0.5
+  sigma_0: 1.0
+  svd_rank: 16
+  svd_reshape_k: 64
+  momentum_beta: 0.9
+  ema_gamma: 0.9
+  anneal_kappa: 0.02
+  align_tau: 0.1
+  scaffold: true
+  two_track: true
+  two_track_lambda: 0.7
+  beta_strat: 0.5
+  sigma_total: 3.0
+  rdp_alpha: 2.0
+  nsr_warn: 5.0
+
+output_dir: ./results
+device: auto
+seed: 42
