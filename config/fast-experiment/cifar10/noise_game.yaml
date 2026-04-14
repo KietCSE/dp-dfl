@@ -9,7 +9,7 @@ model:
 
 topology:
   n_nodes: 20
-  n_attackers: 8          # 40% Byzantine
+  n_attackers: 4          # 20% Byzantine
   n_neighbors: 10
   seed: 42
 
@@ -22,7 +22,7 @@ training:
 
 dp:
   noise_mode: none        # noise-game self-manages strategic noise injection
-  clip_bound: 2.0
+  clip_bound: 5.0
   delta: 1.0e-5
   epsilon_max: 100000000.0
   accountant: renyi_dpsgd
