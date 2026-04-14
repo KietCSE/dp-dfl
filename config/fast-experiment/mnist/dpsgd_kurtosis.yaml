@@ -15,7 +15,7 @@ topology:
   seed: 42
 
 training:
-  n_rounds: 150
+  n_rounds: 100
   local_epochs: 1
   batch_size: 64
   lr: 0.01
