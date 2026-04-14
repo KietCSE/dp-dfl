@@ -22,14 +22,14 @@ training:
   n_workers: 5
 
 dp:
-  noise_mode: per_step
+  noise_mode: post_training    # User-level DP: train SGD → clip final update → noise
   clip_bound: 2.0
   noise_mult: 1.1
   delta: 1.0e-5
   epsilon_max: 10.0
   accountant: renyi_dpsgd
   accountant_params:
-    alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
 
 attack:
   type: scale
@@ -37,7 +37,7 @@ attack:
   start_round: 0
 
 aggregation:
-  type: simple_avg
+  type: fedavg                # FedAvg = weighted average by dataset proportion
   params: {}
 
 output_dir: ./results

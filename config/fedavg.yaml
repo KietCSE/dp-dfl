@@ -29,7 +29,7 @@ dp:
 #   scale_factor: 3.0
 
 aggregation:
-  type: simple_avg            # FedAvg = simple averaging, no defense
+  type: fedavg                # FedAvg = weighted average by dataset proportion
   params: {}
 
 output_dir: ./results

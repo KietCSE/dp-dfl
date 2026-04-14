@@ -29,7 +29,7 @@ attack:
   start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:
-  type: simple_avg
+  type: fedavg                # FedAvg = weighted average by dataset proportion
   params: {}
 
 output_dir: ./results

@@ -30,7 +30,7 @@ attack:
   start_round: 0
 
 aggregation:
-  type: simple_avg
+  type: fedavg                # FedAvg = weighted average by dataset proportion
   params: {}
 
 output_dir: ./results
