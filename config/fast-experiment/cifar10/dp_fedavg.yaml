@@ -2,7 +2,6 @@ dataset:
   name: cifar10
   split:
     mode: iid
-    alpha: 0.5
 
 model:
   name: cnn
@@ -10,23 +9,23 @@ model:
 
 topology:
   n_nodes: 20
-  n_attackers: 4
+  n_attackers: 4          # 20% Byzantine
   n_neighbors: 10
   seed: 42
 
 training:
-  n_rounds: 200
+  n_rounds: 100
   local_epochs: 1
   batch_size: 64
   lr: 0.01
   n_workers: 5
 
 dp:
-  noise_mode: per_step
-  clip_bound: 2.0
-  noise_mult: 1.1
+  noise_mode: post_training    # User-level DP: train SGD → clip final update → noise
+  clip_bound: 5.0
+  noise_mult: 0.1
   delta: 1.0e-5
-  epsilon_max: 10.0
+  epsilon_max: 100000000.0
   accountant: renyi_dpsgd
   accountant_params:
     alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
@@ -34,13 +33,12 @@ dp:
 attack:
   type: scale
   scale_factor: 3.0
-  start_round: 0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:
-  type: kurtosis_avg
-  params:
-    centered: false
-    confidence: 1.96
+  type: fedavg                # FedAvg = weighted average by dataset proportion
+  params: {}
 
 output_dir: ./results
+device: auto
 seed: 42

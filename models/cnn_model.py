@@ -9,8 +9,8 @@ from dpfl.registry import register, MODELS
 
 @register(MODELS, "cnn")
 class CNN(BaseModel):
-    """Conv(3->32) -> ReLU -> Conv(32->64) -> ReLU -> MaxPool(2)
-    -> FC(16384->hidden) -> ReLU -> FC(hidden->classes)"""
+    """Conv(3->32) -> ReLU -> MaxPool(2) -> Conv(32->64) -> ReLU -> MaxPool(2)
+    -> FC(4096->hidden) -> ReLU -> FC(hidden->classes)"""
 
     def __init__(self, input_channels: int = 3, hidden_size: int = 128,
                  num_classes: int = 10, **kwargs):
@@ -18,14 +18,15 @@ class CNN(BaseModel):
         self.features = nn.Sequential(
             nn.Conv2d(input_channels, 32, kernel_size=3, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(2),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
         )
-        # After MaxPool(2) on 32x32 input: 64 x 16 x 16 = 16384
+        # After 2x MaxPool(2) on 32x32 input: 64 x 8 x 8 = 4096
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(64 * 16 * 16, hidden_size),
+            nn.Linear(64 * 8 * 8, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, num_classes),
         )

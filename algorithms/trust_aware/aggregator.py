@@ -81,11 +81,11 @@ class TrustAwareD2BAggregator(BaseAggregator):
         Full D2B-DP pipeline. Extended signature with trust context.
         Falls back to simple mean if no trust context (ABC compat).
         """
-        # Fallback: no trust context -> simple mean
+        # Fallback: no trust context -> own update already in own_params, add neighbor mean
         if node_trust_scores is None:
             stack = torch.stack(list(neighbor_updates.values()))
             return AggregationResult(
-                new_params=own_params + own_update + stack.mean(0),
+                new_params=own_params + stack.mean(0),
                 clean_ids=list(neighbor_updates.keys()), flagged_ids=[])
 
         # Phase 3: Inbound evaluation
@@ -118,7 +118,8 @@ class TrustAwareD2BAggregator(BaseAggregator):
                 clean_ids.append(j)
 
         # Step 11: Aggregate from clean set only
-        new_params = own_params + own_update
+        # own_params already contains own_update (post-training), add clean neighbor mean
+        new_params = own_params
         if clean_ids:
             new_params = new_params + torch.stack(
                 [neighbor_updates[j] for j in clean_ids]).mean(0)

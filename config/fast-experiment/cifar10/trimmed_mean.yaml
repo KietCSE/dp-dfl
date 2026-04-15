@@ -2,7 +2,6 @@ dataset:
   name: cifar10
   split:
     mode: iid
-    alpha: 0.5
 
 model:
   name: cnn
@@ -10,28 +9,30 @@ model:
 
 topology:
   n_nodes: 20
-  n_attackers: 4
+  n_attackers: 4          # 20% Byzantine
   n_neighbors: 10
   seed: 42
 
 training:
-  n_rounds: 200
+  n_rounds: 100
   local_epochs: 1
   batch_size: 64
   lr: 0.01
   n_workers: 5
 
 dp:
-  noise_mode: none            # No DP — plain FedAvg
+  noise_mode: none        # No DP — Trimmed Mean defense only
 
 attack:
   type: scale
   scale_factor: 3.0
-  start_round: 0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:
-  type: fedavg                # FedAvg = weighted average by dataset proportion
-  params: {}
+  type: trimmed_mean
+  params:
+    trim_ratio: 0.2
 
 output_dir: ./results
+device: auto
 seed: 42

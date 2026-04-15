@@ -31,8 +31,8 @@ class KurtosisAvgAggregator(BaseAggregator):
             else:
                 clean_ids.append(j)
 
-        # Aggregate: own_params + own_update + mean(clean neighbor updates)
-        new_params = own_params + own_update
+        # own_params already contains own_update (post-training), add clean neighbor mean
+        new_params = own_params
         if clean_ids:
             clean_stack = torch.stack([neighbor_updates[j] for j in clean_ids])
             new_params = new_params + clean_stack.mean(dim=0)

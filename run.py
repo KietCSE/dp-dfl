@@ -27,6 +27,7 @@ import dpfl.core.label_flip_attack  # noqa: F401
 import dpfl.core.renyi_accountant  # noqa: F401
 import dpfl.algorithms.dpsgd_kurtosis.kurtosis_aggregator  # noqa: F401
 import dpfl.algorithms.noise_game.simple_avg_aggregator  # noqa: F401
+import dpfl.algorithms.fedavg.fedavg_aggregator  # noqa: F401
 import dpfl.algorithms.trust_aware.aggregator  # noqa: F401
 import dpfl.algorithms.krum.krum_aggregator  # noqa: F401
 import dpfl.algorithms.trimmed_mean.trimmed_mean_aggregator  # noqa: F401
@@ -136,10 +137,25 @@ def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device)
         accountant=accountant, tracker=tracker, device=device)
 
 
-# FedAvg, Krum, DP-FedAvg, Trimmed Mean, FLAME reuse DFLSimulator
-build_fedavg = build_dpsgd_kurtosis
+def build_fedavg(config, dataset_cls, model_cls, param_dim, tracker, device):
+    from dpfl.algorithms.fedavg.simulator import FedAvgSimulator
+    noise_mechanism = NOISE_MECHANISMS["gaussian"]()
+    attack = _build_attack(config)
+    aggregator = AGGREGATORS["fedavg"]()
+    accountant = None
+    if config.dp.noise_mode != "none":
+        accountant = _build_accountant(config)
+    return FedAvgSimulator(
+        config, dataset_cls, model_cls,
+        noise_mechanism, aggregator, attack,
+        accountant=accountant, tracker=tracker, device=device)
+
+
+# DP-FedAvg reuses FedAvgSimulator (weighted avg) with DP-SGD noise
+build_dp_fedavg = build_fedavg
+
+# Krum, Trimmed Mean, FLAME reuse DFLSimulator
 build_krum = build_dpsgd_kurtosis
-build_dp_fedavg = build_dpsgd_kurtosis
 build_trimmed_mean = build_dpsgd_kurtosis
 build_flame = build_dpsgd_kurtosis
 

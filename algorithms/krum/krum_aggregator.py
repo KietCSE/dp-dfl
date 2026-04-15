@@ -30,7 +30,7 @@ class KrumAggregator(BaseAggregator):
 
         if n <= 1:
             return AggregationResult(
-                new_params=own_params + own_update,
+                new_params=own_params,  # own_params already post-training
                 clean_ids=list(neighbor_updates.keys()), flagged_ids=[])
 
         # Compute pairwise distances
@@ -63,8 +63,10 @@ class KrumAggregator(BaseAggregator):
         clean_ids = [j for j in neighbor_ids if j in selected_ids]
         flagged_ids = [j for j in neighbor_ids if j not in selected_ids]
 
+        # own_params is post-training (= initial + own_update), use initial as anchor
+        initial_params = own_params - own_update
         return AggregationResult(
-            new_params=own_params + avg_update,
+            new_params=initial_params + avg_update,
             clean_ids=clean_ids,
             flagged_ids=flagged_ids,
             node_metrics={"krum_score": min(scores)},

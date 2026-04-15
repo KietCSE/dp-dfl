@@ -31,7 +31,7 @@ class TrimmedMeanAggregator(BaseAggregator):
     ) -> AggregationResult:
         if not neighbor_updates:
             return AggregationResult(
-                new_params=own_params + own_update,
+                new_params=own_params,  # own_params already post-training
                 clean_ids=[], flagged_ids=[],
             )
 
@@ -70,8 +70,10 @@ class TrimmedMeanAggregator(BaseAggregator):
 
         logger.debug("TrimmedMean: n=%d, k=%d, flagged=%s", n, k, flagged_ids)
 
+        # own_params is post-training (= initial + own_update), use initial as anchor
+        initial_params = own_params - own_update
         return AggregationResult(
-            new_params=own_params + mean_update,
+            new_params=initial_params + mean_update,
             clean_ids=clean_ids,
             flagged_ids=flagged_ids,
             metrics={"trim_k": k, "n_updates": n},

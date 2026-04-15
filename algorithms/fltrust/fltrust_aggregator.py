@@ -28,7 +28,7 @@ class FLTrustAggregator(BaseAggregator):
         root_gradient: Optional[torch.Tensor] = None,
     ) -> AggregationResult:
         if not neighbor_updates or root_gradient is None:
-            return AggregationResult(new_params=own_params + own_update)
+            return AggregationResult(new_params=own_params)  # own_params already post-training
 
         root_norm = root_gradient.norm()
         if root_norm < 1e-10:
@@ -52,7 +52,7 @@ class FLTrustAggregator(BaseAggregator):
         if total_ts < 1e-10:
             logger.warning("FLTrust: all trust scores zero, flagging all neighbors")
             return AggregationResult(
-                new_params=own_params + own_update,
+                new_params=own_params,  # own_params already post-training
                 flagged_ids=list(neighbor_updates.keys()),
             )
         norm_ts = {nid: ts / total_ts for nid, ts in trust_scores.items()}

@@ -1,8 +1,8 @@
 dataset:
   name: mnist
   split:
-    mode: iid
-    alpha: 0.5
+    mode: dirichlet
+    alpha: 0.3            # non-IID — harder setting
 
 model:
   name: mlp
@@ -10,23 +10,24 @@ model:
 
 topology:
   n_nodes: 20
-  n_attackers: 0
+  n_attackers: 8          # 40% Byzantine
   n_neighbors: 10
   seed: 42
 
 training:
-  n_rounds: 30
+  n_rounds: 100
   local_epochs: 1
   batch_size: 64
   lr: 0.01
   n_workers: 5
 
 dp:
-  noise_mode: none            # No DP — plain FedAvg
+  noise_mode: none        # No DP — plain FedAvg
 
-# attack:
-#   type: scale
-#   scale_factor: 3.0
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:
   type: fedavg                # FedAvg = weighted average by dataset proportion
