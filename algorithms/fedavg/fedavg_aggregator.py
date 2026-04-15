@@ -42,8 +42,10 @@ class FedAvgAggregator(BaseAggregator):
             [own_update] + [neighbor_updates[j] for j in neighbor_ids])
         avg_update = (all_updates * weights.unsqueeze(1)).sum(dim=0)
 
+        # own_params is post-training (= initial + own_update), subtract to get initial anchor
+        initial_params = own_params - own_update
         return AggregationResult(
-            new_params=own_params + avg_update,
+            new_params=initial_params + avg_update,
             clean_ids=neighbor_ids,
             flagged_ids=[],
         )

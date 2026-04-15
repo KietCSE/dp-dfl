@@ -31,7 +31,7 @@ class FLAMEAggregator(BaseAggregator):
         neighbor_updates: Dict[int, torch.Tensor],
     ) -> AggregationResult:
         if not neighbor_updates:
-            return AggregationResult(new_params=own_params + own_update)
+            return AggregationResult(new_params=own_params)  # own_params already post-training
 
         all_ids = [-1] + list(neighbor_updates.keys())
         all_updates = [own_update] + [neighbor_updates[nid] for nid in neighbor_updates]
@@ -49,7 +49,7 @@ class FLAMEAggregator(BaseAggregator):
         if not clean_indices:
             logger.warning("FLAME: all nodes flagged, falling back to own update")
             return AggregationResult(
-                new_params=own_params + own_update,
+                new_params=own_params,  # own_params already post-training
                 flagged_ids=[nid for nid in neighbor_updates],
             )
 
@@ -68,8 +68,10 @@ class FLAMEAggregator(BaseAggregator):
         logger.debug("FLAME: clean=%d, flagged=%d, clip_bound=%.4f, median_norm=%.4f",
                       len(clean_indices), len(flagged_indices), clip_bound, median_norm)
 
+        # own_params is post-training (= initial + own_update), use initial as anchor
+        initial_params = own_params - own_update
         return AggregationResult(
-            new_params=own_params + noised_update,
+            new_params=initial_params + noised_update,
             clean_ids=clean_ids,
             flagged_ids=flagged_ids,
             metrics={
