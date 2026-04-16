@@ -101,6 +101,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 }
 
             # Phase 3: Aggregation
+            attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
             per_node_detection = {}
             node_agg_metrics = {}
@@ -119,7 +120,8 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     node.model.set_flat_params(result.new_params)
 
                 tp, fp, fn, tn = self._compute_detection(
-                    result.flagged_ids, result.clean_ids, node.neighbors)
+                    result.flagged_ids, result.clean_ids, node.neighbors,
+                    attack_active=attack_active)
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 
