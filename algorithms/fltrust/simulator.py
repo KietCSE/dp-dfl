@@ -30,6 +30,7 @@ class FLTrustSimulator(DFLSimulator):
             )
 
             # Phase 2: Compute root gradients + aggregate per node
+            attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
             per_node_det = {}
             node_agg_metrics = {}
@@ -57,8 +58,8 @@ class FLTrustSimulator(DFLSimulator):
                 node_agg_metrics[node.id] = result.node_metrics
 
                 tp, fp, fn, tn = self._compute_detection(
-                    result.flagged_ids, result.clean_ids, node.neighbors
-                )
+                    result.flagged_ids, result.clean_ids, node.neighbors,
+                    attack_active=attack_active)
                 per_node_det[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp
                 total_fn += fn; total_tn += tn

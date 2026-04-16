@@ -17,6 +17,7 @@ class DFLSimulator(BaseSimulator):
     def run(self):
         """Main loop: train (with DP noise) → aggregate → account → log."""
         for t in range(self.config.training.n_rounds):
+            attack_active = t >= self.config.attack.start_round
             # Step 1: All nodes train with DP-SGD noise (apply_noise=True)
             updates, all_steps = self._train_all_nodes(apply_noise=True, round_t=t)
 
@@ -33,7 +34,8 @@ class DFLSimulator(BaseSimulator):
                 node_agg_metrics[node.id] = result.node_metrics
 
                 tp, fp, fn, tn = self._compute_detection(
-                    result.flagged_ids, result.clean_ids, node.neighbors)
+                    result.flagged_ids, result.clean_ids, node.neighbors,
+                    attack_active=attack_active)
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 

@@ -71,6 +71,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                         updates[node.id], sigma_sq, eps_step)
 
             # Phase 3+4: Inbound eval + filter + aggregate
+            attack_active = t >= self.config.attack.start_round
             tp_all = fp_all = fn_all = tn_all = 0
             per_node_detection = {}
             node_agg_metrics = {}
@@ -85,7 +86,8 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 node.model.set_flat_params(result.new_params)
                 node_agg_metrics[node.id] = result.node_metrics
                 tp, fp, fn, tn = self._compute_detection(
-                    result.flagged_ids, result.clean_ids, node.neighbors)
+                    result.flagged_ids, result.clean_ids, node.neighbors,
+                    attack_active=attack_active)
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 tp_all += tp; fp_all += fp; fn_all += fn; tn_all += tn
 

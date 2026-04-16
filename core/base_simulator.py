@@ -167,12 +167,18 @@ class BaseSimulator(ABC):
             }
         return results
 
-    def _compute_detection(self, flagged_ids, clean_ids, neighbors):
-        """Compute TP/FP/FN/TN from flagged vs actual attackers."""
-        tp = sum(1 for j in flagged_ids if j in self.attacker_ids)
-        fp = sum(1 for j in flagged_ids if j not in self.attacker_ids)
-        fn = sum(1 for j in clean_ids if j in self.attacker_ids)
-        tn = sum(1 for j in clean_ids if j not in self.attacker_ids)
+    def _compute_detection(self, flagged_ids, clean_ids, neighbors,
+                           attack_active: bool = True):
+        """Compute TP/FP/FN/TN from flagged vs actual attackers.
+
+        When attack_active=False, no node is a true attacker this round —
+        flagging an attacker-ID node = FP (not TP), leaving it = TN (not FN).
+        """
+        active_ids = self.attacker_ids if attack_active else set()
+        tp = sum(1 for j in flagged_ids if j in active_ids)
+        fp = sum(1 for j in flagged_ids if j not in active_ids)
+        fn = sum(1 for j in clean_ids if j in active_ids)
+        tn = sum(1 for j in clean_ids if j not in active_ids)
         return tp, fp, fn, tn
 
     def _log_round(self, t, epsilon, updates, per_node_detection,
