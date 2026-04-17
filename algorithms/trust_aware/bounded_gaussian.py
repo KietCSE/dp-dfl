@@ -15,7 +15,7 @@ class BoundedGaussianMechanism:
         """sigma^2_ij = 2 * C^2 / (|D_i|^2 * rho_ij). Guard: budget <= 0 -> large variance."""
         if budget <= 1e-12:
             return 1e6
-        return 2.0 * clip_bound ** 2 / (dataset_size ** 2 * budget)
+        return 2.0 * clip_bound ** 2 / (budget)
 
     def compute_bound(self, epsilon: float) -> float:
         """b = (e^eps - eta) / (e^eps + eta). Clamp to [0, inf)."""

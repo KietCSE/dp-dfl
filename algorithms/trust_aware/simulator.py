@@ -1,9 +1,15 @@
 """Trust-Aware DFL simulator: 4-phase per-round loop for D2B-DP algorithm."""
 
+import time
+import logging
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 
 from dpfl.core.base_simulator import BaseSimulator
 from dpfl.algorithms.trust_aware.node import TrustAwareNode
+
+logger = logging.getLogger(__name__)
 
 
 class TrustAwareDFLSimulator(BaseSimulator):
@@ -35,20 +41,42 @@ class TrustAwareDFLSimulator(BaseSimulator):
 
     def run(self):
         """Main loop: 4-phase D2B-DP per round."""
+        n_workers = self.config.training.n_workers
+        logger.info("Training mode: %s (n_workers=%d)",
+                     "PARALLEL" if n_workers > 1 else "SEQUENTIAL", n_workers)
         for t in range(self.config.training.n_rounds):
-            # Phase 1: Train + Adaptive Clip
-            updates = {}
-            for node in self.nodes.values():
-                attack_active = t >= self.config.attack.start_round
+            # Phase 1: Train (parallel if n_workers>1) + Adaptive Clip
+            t0 = time.time()
+            attack_active = t >= self.config.attack.start_round
+
+            def _train_node(node):
                 atk = self.attack if (node.is_attacker and attack_active) else None
                 update, _ = node.compute_update(
                     self.trainer, self.noise_mechanism, atk, apply_noise=False)
+                return node.id, update
+
+            raw_updates = {}
+            if n_workers > 1:
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    for nid, upd in pool.map(_train_node, self.nodes.values()):
+                        raw_updates[nid] = upd
+            else:
+                for node in self.nodes.values():
+                    nid, upd = _train_node(node)
+                    raw_updates[nid] = upd
+
+            # Adaptive clip (sequential — cheap, updates per-node state)
+            updates = {}
+            for node in self.nodes.values():
+                update = raw_updates[node.id]
                 raw_norm = update.norm(2).item()
                 node.clip_history.append(raw_norm)
                 thresh = self.clipper.get_threshold(node.clip_history)
                 if thresh is not None:
                     update = self.clipper.clip(update, thresh)
                 updates[node.id] = update
+            logger.debug("Round %d Phase 1 (train+clip): %.2fs, %d nodes, workers=%d",
+                         t, time.time() - t0, len(self.nodes), n_workers)
 
             # Phase 2: Outbound — per-edge noise injection
             edge_updates = {}
@@ -59,7 +87,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 for j in node.neighbors:
                     rho_base = min(
                         (1 + self.tc.beta * t) * self.tc.rho_min, self.tc.rho_max)
-                    rho_ij = rho_base * node.trust_scores[j]
+                    rho_ij = rho_base  # trust only affects aggregation, not noise
                     sigma_sq = self.bounded_noise.compute_noise_variance(
                         clip_e, node.n_samples, rho_ij)
                     self.rdp.step(node, j, clip_e, sigma_sq)

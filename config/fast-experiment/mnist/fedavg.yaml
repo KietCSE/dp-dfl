@@ -1,9 +1,8 @@
 dataset:
   name: mnist
   split:
-    mode: dirichlet
-    alpha: 0.3            # non-IID — harder setting
-
+    mode: iid
+    
 model:
   name: mlp
   hidden_size: 100
@@ -15,7 +14,7 @@ topology:
   seed: 42
 
 training:
-  n_rounds: 100
+  n_rounds: 50
   local_epochs: 1
   batch_size: 64
   lr: 0.01
@@ -26,7 +25,7 @@ dp:
 
 attack:
   type: scale
-  scale_factor: 3.0
+  scale_factor: -10.0
   start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:
