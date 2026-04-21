@@ -9,7 +9,7 @@ model:
 
 topology:
   n_nodes: 20
-  n_attackers: 8          # 40% Byzantine
+  n_attackers: 0          # 40% Byzantine
   n_neighbors: 10
   seed: 42
 
@@ -22,6 +22,7 @@ training:
 
 dp:
   noise_mode: none        # No DP — plain FedAvg
+  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 
 attack:
   type: scale

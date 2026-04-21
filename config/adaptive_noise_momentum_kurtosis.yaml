@@ -1,0 +1,72 @@
+# Adaptive Noise DP DFL + 2-layer defense (Momentum Cosine + Kurtosis).
+#
+# Layer 1: Momentum Cosine (Karimireddy, He, Jaggi ICML 2021)
+#   - beta_m=0.9: noise variance reduce ~5% after ~10 rounds
+#   - warmup_rounds=5: skip L1 flagging while momentum buffers converge
+#   - gamma_mad=2.0: MAD-adaptive threshold, robust to non-IID
+# Layer 2: Kurtosis
+#   - confidence=1.96 (95% CI), uncentered RMS-based kurtosis
+# Composition: AND-of-clean (accept iff pass BOTH layers)
+#
+# Attack scenario: label flipping (direction attack).
+#   Kurtosis alone would fail because a label-flipping attacker trains
+#   honestly with matching clip + noise, producing Gaussian-looking
+#   updates. Momentum Cosine exposes the persistent wrong direction.
+
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    alpha: 1.0
+    samples_per_node: 3000
+
+model:
+  name: mlp
+  hidden_size: 32              # D ≈ 25,460
+
+topology:
+  n_nodes: 100
+  n_attackers: 0               # 20% attackers
+  n_neighbors: 80
+  seed: 42
+
+training:
+  n_rounds: 30                 # enough rounds past warmup (T_w=5)
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: none             # adaptive_noise simulator does its own clip+noise
+  clip_bound: 2.0
+  delta: 1.0e-5
+  epsilon_max: 100000.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
+  sampling_rate: 0.2           # keep all nodes active so L1 has enough signal
+
+attack:
+  type: label_flip
+  flip_mode: rotate            # rotate labels -> persistent direction bias
+  start_round: 10
+
+aggregation:
+  type: momentum_kurtosis_avg
+  params:
+    beta_m: 0.95              # tang smoothing: Var[noise_EMA] giam tu 5% -> 2.5% goc
+    gamma_mad: 4.0            # chat hon: chi flag khi cos < median - 4*MAD
+    warmup_rounds: 10         # >= EMA window 1/(1-beta_m)=20, buffer 5 rounds
+    kurtosis_confidence: 1.96
+    kurtosis_centered: false
+
+adaptive_noise:
+  sigma_0: 0.3
+  sigma_min: 0.01
+  gamma: 0.9
+  beta_min: 0.90
+  epsilon_num: 1.0e-8
+
+output_dir: ./results
+seed: 42

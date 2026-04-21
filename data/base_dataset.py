@@ -13,8 +13,14 @@ class BaseDataset(ABC):
 
     @abstractmethod
     def split(self, dataset: Dataset, n_nodes: int, mode: str = "iid",
-              alpha: float = 0.5) -> Dict[int, Subset]:
-        """Split train dataset across n_nodes. Returns {node_id: Subset}."""
+              alpha: float = 0.5, samples_per_node: int = None
+              ) -> Dict[int, Subset]:
+        """Split train dataset across n_nodes. Returns {node_id: Subset}.
+
+        samples_per_node: if set, each node draws this many random samples from
+        the full pool (IID mode, with overlap allowed). Default None = disjoint
+        partition of size len(dataset) // n_nodes.
+        """
         ...
 
     @property

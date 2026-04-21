@@ -26,6 +26,9 @@ class TrustAwareDFLSimulator(BaseSimulator):
         self.clipper = adaptive_clipper
         self.bounded_noise = bounded_noise
         self.rdp = per_neighbor_accountant
+        # Wire isolated RNG into the per-edge bounded Gaussian mechanism.
+        if hasattr(self.bounded_noise, "set_generator"):
+            self.bounded_noise.set_generator(self.noise_gen)
 
     def _create_node(self, node_id, model, data, is_attacker):
         node = TrustAwareNode(node_id, model, data, is_attacker, self.tc)
@@ -45,6 +48,9 @@ class TrustAwareDFLSimulator(BaseSimulator):
         logger.info("Training mode: %s (n_workers=%d)",
                      "PARALLEL" if n_workers > 1 else "SEQUENTIAL", n_workers)
         for t in range(self.config.training.n_rounds):
+            # Step 0: Deterministic Poisson client subsampling.
+            active_ids = self._sample_active_nodes(t)
+
             # Phase 1: Train (parallel if n_workers>1) + Adaptive Clip
             t0 = time.time()
             attack_active = t >= self.config.attack.start_round
@@ -65,12 +71,15 @@ class TrustAwareDFLSimulator(BaseSimulator):
                     nid, upd = _train_node(node)
                     raw_updates[nid] = upd
 
-            # Adaptive clip (sequential — cheap, updates per-node state)
+            # Adaptive clip (sequential — cheap, updates per-node state).
+            # Only update clip_history for active nodes to avoid polluting
+            # adaptive clipper state from rounds where the node is absent.
             updates = {}
             for node in self.nodes.values():
                 update = raw_updates[node.id]
-                raw_norm = update.norm(2).item()
-                node.clip_history.append(raw_norm)
+                if node.id in active_ids:
+                    raw_norm = update.norm(2).item()
+                    node.clip_history.append(raw_norm)
                 thresh = self.clipper.get_threshold(node.clip_history)
                 if thresh is not None:
                     update = self.clipper.clip(update, thresh)
@@ -78,10 +87,12 @@ class TrustAwareDFLSimulator(BaseSimulator):
             logger.debug("Round %d Phase 1 (train+clip): %.2fs, %d nodes, workers=%d",
                          t, time.time() - t0, len(self.nodes), n_workers)
 
-            # Phase 2: Outbound — per-edge noise injection
+            # Phase 2: Outbound — per-edge noise injection (active senders only)
             edge_updates = {}
             for node in self.nodes.values():
                 edge_updates[node.id] = {}
+                if node.id not in active_ids:
+                    continue  # inactive: no outbound edges this round
                 clip_e = (self.clipper.get_threshold(node.clip_history)
                           or updates[node.id].norm(2).item())
                 for j in node.neighbors:
@@ -98,16 +109,19 @@ class TrustAwareDFLSimulator(BaseSimulator):
                     edge_updates[node.id][j] = self.bounded_noise.add_bounded_noise(
                         updates[node.id], sigma_sq, eps_step)
 
-            # Phase 3+4: Inbound eval + filter + aggregate
+            # Phase 3+4: Inbound eval + filter + aggregate (active receivers only)
             attack_active = t >= self.config.attack.start_round
             tp_all = fp_all = fn_all = tn_all = 0
-            per_node_detection = {}
-            node_agg_metrics = {}
+            per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
+            node_agg_metrics = {nid: {} for nid in self.nodes}
             for node in self.nodes.values():
+                if node.id not in active_ids:
+                    continue  # inactive: skip aggregation
                 received = {
                     j: edge_updates[j][node.id]
                     for j in node.neighbors
-                    if edge_updates.get(j, {}).get(node.id) is not None}
+                    if j in active_ids
+                    and edge_updates.get(j, {}).get(node.id) is not None}
                 result = self.aggregator.aggregate(
                     updates[node.id], node.model.get_flat_params(), received,
                     node.trust_scores, node.z_score_buffer, node.trust_buffer)

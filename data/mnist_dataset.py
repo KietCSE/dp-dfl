@@ -38,20 +38,36 @@ class MNISTDataset(BaseDataset):
         return train_ds, test_ds
 
     def split(self, dataset: Dataset, n_nodes: int, mode: str = "iid",
-              alpha: float = 0.5) -> Dict[int, Subset]:
+              alpha: float = 0.5, samples_per_node: int = None
+              ) -> Dict[int, Subset]:
         if mode == "iid":
-            return self._split_iid(dataset, n_nodes)
+            return self._split_iid(dataset, n_nodes, samples_per_node)
         elif mode == "dirichlet":
             return self._split_dirichlet(dataset, n_nodes, alpha)
         else:
             raise ValueError(f"Unknown split mode: {mode}")
 
-    def _split_iid(self, dataset: Dataset, n_nodes: int) -> Dict[int, Subset]:
-        """Random shuffle then equal-size partitions."""
-        indices = torch.randperm(len(dataset)).tolist()
-        chunk_size = len(dataset) // n_nodes
+    def _split_iid(self, dataset: Dataset, n_nodes: int,
+                    samples_per_node: int = None) -> Dict[int, Subset]:
+        """IID split across nodes.
+
+        samples_per_node=None → disjoint partition (size len(dataset)//n_nodes).
+        samples_per_node=int  → each node randomly draws this many samples from
+        the full pool (overlap allowed; each node still IID to dataset).
+        """
+        n_total = len(dataset)
+        if samples_per_node is None:
+            # Disjoint partition (default, backward compatible).
+            indices = torch.randperm(n_total).tolist()
+            chunk_size = n_total // n_nodes
+            return {
+                i: Subset(dataset, indices[i * chunk_size:(i + 1) * chunk_size])
+                for i in range(n_nodes)
+            }
+        # Overlap mode: each node draws its own random subset from full pool.
+        k = min(samples_per_node, n_total)
         return {
-            i: Subset(dataset, indices[i * chunk_size:(i + 1) * chunk_size])
+            i: Subset(dataset, torch.randperm(n_total)[:k].tolist())
             for i in range(n_nodes)
         }
 

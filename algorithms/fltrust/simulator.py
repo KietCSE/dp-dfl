@@ -23,28 +23,33 @@ class FLTrustSimulator(DFLSimulator):
 
     def run(self):
         for t in range(self.config.training.n_rounds):
+            # Step 0: Deterministic Poisson client subsampling.
+            active_ids = self._sample_active_nodes(t)
+
             # Phase 1: Train all nodes
             updates, steps = self._train_all_nodes(
                 apply_noise=self.config.dp.noise_mode != "none",
                 round_t=t,
             )
 
-            # Phase 2: Compute root gradients + aggregate per node
+            # Phase 2: Compute root gradients + aggregate per node (active only)
             attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
-            per_node_det = {}
-            node_agg_metrics = {}
+            per_node_det = {nid: (0, 0, 0, 0) for nid in self.nodes}
+            node_agg_metrics = {nid: {} for nid in self.nodes}
 
             for node in self.nodes.values():
                 if node.id not in updates:
                     continue
+                if node.id not in active_ids:
+                    continue  # inactive: skip root grad compute + aggregation
 
                 root_grad = self._compute_root_gradient(node)
 
                 nbr_updates = {
                     nid: updates[nid]
                     for nid in node.neighbors
-                    if nid in updates
+                    if nid in updates and nid in active_ids
                 }
 
                 result = self.aggregator.aggregate(

@@ -62,6 +62,7 @@ def run_experiment(config_cls, build_fn, prefix, default_config_name, algo_name=
         "n_attackers": config.topology.n_attackers,
         "noise_mult": config.dp.noise_mult,
         "clip_bound": config.dp.clip_bound,
+        "sampling_rate": config.dp.sampling_rate,
         "split_mode": config.dataset.split.mode,
         "dirichlet_alpha": config.dataset.split.alpha,
     }

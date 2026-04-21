@@ -42,6 +42,18 @@ class NoiseGameMechanism:
         # DP sigma floor: minimum sigma for (eps_max, delta)-DP
         self._sigma_floor = clip_bound * math.sqrt(
             2.0 * math.log(1.25 / delta)) / epsilon_max
+        self._gen: "torch.Generator | None" = None
+
+    def set_generator(self, gen: "torch.Generator"):
+        """Set isolated RNG for all noise sampling."""
+        self._gen = gen
+
+    def _randn_like(self, x: torch.Tensor) -> torch.Tensor:
+        """Draw N(0,1) matching shape/device/dtype of x, using isolated gen."""
+        if self._gen is not None:
+            return torch.randn(x.shape, generator=self._gen,
+                               device=x.device, dtype=x.dtype)
+        return torch.randn_like(x)
 
     # -- Layer 2: Adaptive sigma scheduling --
 
@@ -63,7 +75,7 @@ class NoiseGameMechanism:
     def compute_dp_noise(self, gradient: torch.Tensor,
                          sigma_dp: float) -> torch.Tensor:
         """Standard Gaussian DP noise: n_DP ~ N(0, sigma_dp^2 I)."""
-        return torch.randn_like(gradient) * sigma_dp
+        return self._randn_like(gradient) * sigma_dp
 
     # -- Layer 3: Strategic noise components --
 
@@ -89,7 +101,7 @@ class NoiseGameMechanism:
     def orthogonal_noise(self, gradient: torch.Tensor,
                          sigma: float) -> torch.Tensor:
         """Orthogonal noise: z projected perpendicular to gradient."""
-        z = torch.randn_like(gradient) * sigma
+        z = self._randn_like(gradient) * sigma
         g_norm_sq = gradient.dot(gradient)
         if g_norm_sq < 1e-12:
             return z
@@ -113,10 +125,14 @@ class NoiseGameMechanism:
         try:
             U, S, V = torch.svd_lowrank(matrix, q=rank)
         except RuntimeError:
-            return torch.randn_like(gradient) * sigma
+            return self._randn_like(gradient) * sigma
         eps = 1e-8
         inv_weights = 1.0 / (S + eps)
-        r = torch.randn(rank, device=gradient.device) * sigma
+        if self._gen is not None:
+            r = torch.randn((rank,), generator=self._gen,
+                            device=gradient.device, dtype=gradient.dtype) * sigma
+        else:
+            r = torch.randn(rank, device=gradient.device) * sigma
         n_spec_flat = (U @ torch.diag(inv_weights * r) @ V.T).flatten()[:D]
         return n_spec_flat
 

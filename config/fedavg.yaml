@@ -28,6 +28,7 @@ dp:
 #   type: scale
 #   scale_factor: 3.0
 
+  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 aggregation:
   type: fedavg                # FedAvg = weighted average by dataset proportion
   params: {}

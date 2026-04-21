@@ -23,6 +23,11 @@ class FLAMEAggregator(BaseAggregator):
         self.noise_mult = noise_mult
         self.delta = delta
         self.min_cluster_size = min_cluster_size
+        self._gen: "torch.Generator | None" = None
+
+    def set_generator(self, gen: "torch.Generator"):
+        """Set isolated RNG for DP noise sampling."""
+        self._gen = gen
 
     def aggregate(
         self,
@@ -132,5 +137,9 @@ class FLAMEAggregator(BaseAggregator):
                       n_clean: int):
         """Add Gaussian noise for (eps,delta)-DP."""
         sigma = self.noise_mult * clip_bound / max(n_clean, 1)
-        noise = torch.randn_like(avg_update) * sigma
-        return avg_update + noise
+        if self._gen is not None:
+            raw = torch.randn(avg_update.shape, generator=self._gen,
+                              device=avg_update.device, dtype=avg_update.dtype)
+        else:
+            raw = torch.randn_like(avg_update)
+        return avg_update + raw * sigma

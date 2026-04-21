@@ -1,0 +1,57 @@
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    alpha: 1.0
+    samples_per_node: 3000     # overlap ~5× giữa các node (100·3000/60000)
+
+model:
+  name: mlp
+  hidden_size: 32              # D ≈ 25,460
+
+topology:
+  n_nodes: 40                 # nhiều node để subsampling có ý nghĩa
+  n_attackers: 0
+  n_neighbors: 30              # sparse — active/round ≈ 15·0.3 ≈ 4-5 neighbor
+  seed: 42
+
+training:
+  n_rounds: 30                # T lớn vì mỗi round chỉ ~30 node active
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: none
+  clip_bound: 2.0
+  delta: 1.0e-5
+  epsilon_max: 100000.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
+  sampling_rate: 0.1           # Poisson subsample q=0.3 → amplification q²=0.09
+
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 999             # disable attack
+
+aggregation:
+  type: simple_avg
+  params: {}
+
+adaptive_noise:
+  # Với subsampling q=0.3:
+  #   ε_round ≈ q²·α·C²/(2σ²)  (amplification từ Poisson sampling)
+  #   Với σ_0=0.02, C=2, α=1.25: ε_round ≈ 0.09·1.25·4/(2·0.0004) = 562
+  #   Nhưng expected ε_round thực tế khoảng 50-100 sau conversion alpha tốt
+  # Param drift/round (active node): σ·√(D/N_active) ≈ 0.02·√(25460/30) ≈ 0.58
+  sigma_0: 0.5
+  sigma_min: 0.01
+  gamma: 0.9
+  beta_min: 0.90               # decay nhanh khi loss giảm
+  epsilon_num: 1.0e-8
+
+output_dir: ./results
+seed: 42

@@ -1,7 +1,7 @@
 """All experiment config dataclasses: base, DFL, Trust-Aware, Noise-Game."""
 
 from dataclasses import dataclass, field, fields
-from typing import get_type_hints
+from typing import Optional, get_type_hints
 import yaml
 
 
@@ -56,6 +56,9 @@ class DPConfig:
     accountant_params: dict = field(default_factory=lambda: {
         "alpha_list": [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100],
     })
+    # Client-level Poisson subsampling: 1.0 = no subsampling (all clients active
+    # every round). q < 1.0 gives RDP amplification factor ≈ q² per round.
+    sampling_rate: float = 1.0
 
 @dataclass
 class AttackConfig:
@@ -76,6 +79,9 @@ class AggregationConfig:
 class DataSplitConfig:
     mode: str = "iid"
     alpha: float = 0.5
+    # Samples per node for IID split. None = disjoint partition (total/n_nodes).
+    # int value > total/n_nodes forces overlap (each node samples randomly from pool).
+    samples_per_node: Optional[int] = None
 
 @dataclass
 class DatasetConfig:
@@ -172,3 +178,22 @@ class NoiseGameConfig:
 class NoiseGameExperimentConfig(BaseExperimentConfig):
     """Extends base with noise_game section."""
     noise_game: NoiseGameConfig = field(default_factory=NoiseGameConfig)
+
+
+@dataclass
+class AdaptiveNoiseConfig:
+    """Hyperparameters for Adaptive Noise DP DFL algorithm (Loss-based).
+
+    See docs/adaptive-noise.md for the full algorithm.
+    """
+    sigma_0: float = 2.0        # initial noise std
+    sigma_min: float = 0.8      # floor of noise std
+    gamma: float = 0.9          # EMA smoothing factor for loss
+    beta_min: float = 0.95      # max decay rate per round
+    epsilon_num: float = 1e-8   # numerical constant to avoid division by zero
+
+
+@dataclass
+class AdaptiveNoiseExperimentConfig(BaseExperimentConfig):
+    """Extends base with adaptive_noise section."""
+    adaptive_noise: AdaptiveNoiseConfig = field(default_factory=AdaptiveNoiseConfig)

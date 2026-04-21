@@ -30,6 +30,9 @@ class NoiseGameDFLSimulator(BaseSimulator):
                          accountant=accountant, tracker=tracker, device=device)
         self.ng = ng_config
         self.game_mechanism = game_mechanism
+        # Wire isolated RNG into the strategic noise mechanism.
+        if hasattr(self.game_mechanism, "set_generator"):
+            self.game_mechanism.set_generator(self.noise_gen)
 
     def _create_node(self, node_id, model, data, is_attacker):
         node = NoiseGameNode(node_id, model, data, is_attacker, self.ng)
@@ -39,6 +42,9 @@ class NoiseGameDFLSimulator(BaseSimulator):
     def run(self):
         """Main loop: T rounds of noise-game DFL."""
         for t in range(self.config.training.n_rounds):
+            # Step 0: Deterministic Poisson client subsampling.
+            active_ids = self._sample_active_nodes(t)
+
             # Phase 1: Local training (no noise — game handles it)
             raw_updates, all_steps = self._train_all_nodes(apply_noise=False, round_t=t)
 
@@ -50,7 +56,9 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 factor = min(1.0, C / (norm + 1e-12))
                 clipped[nid] = upd * factor
 
-            # Phase 2: Noise-game pipeline (honest nodes only)
+            # Phase 2: Noise-game pipeline (active honest nodes only).
+            # Inactive honest nodes don't contribute updates this round.
+            # Attackers still contribute their clipped updates (always active).
             final_updates = {}
             extra_node = {}
             sigma_dps = {}
@@ -59,6 +67,8 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 if node.is_attacker:
                     final_updates[nid] = g
                     continue
+                if nid not in active_ids:
+                    continue  # inactive honest: no update contributed
 
                 # SCAFFOLD variance reduction
                 if self.ng.scaffold:
@@ -100,14 +110,20 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     "sigma_dp": metrics["sigma_dp"],
                 }
 
-            # Phase 3: Aggregation
+            # Phase 3: Aggregation (active nodes only)
             attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
-            per_node_detection = {}
-            node_agg_metrics = {}
+            per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
+            node_agg_metrics = {nid: {} for nid in self.nodes}
 
             for node in self.nodes.values():
-                neighbor_upds = {j: final_updates[j] for j in node.neighbors}
+                if node.id not in active_ids:
+                    continue  # inactive: skip aggregation
+                if node.id not in final_updates:
+                    continue  # safety: no final update produced (shouldn't happen)
+                neighbor_upds = {
+                    j: final_updates[j] for j in node.neighbors
+                    if j in final_updates and j in active_ids}
                 result = self.aggregator.aggregate(
                     final_updates[node.id], node.model.get_flat_params(), neighbor_upds)
                 node_agg_metrics[node.id] = result.node_metrics

@@ -9,6 +9,11 @@ class BoundedGaussianMechanism:
 
     def __init__(self, eta: float = 0.1):
         self.eta = eta
+        self._gen: "torch.Generator | None" = None
+
+    def set_generator(self, gen: "torch.Generator"):
+        """Set isolated RNG for noise sampling."""
+        self._gen = gen
 
     def compute_noise_variance(self, clip_bound: float, dataset_size: int,
                                budget: float) -> float:
@@ -26,7 +31,12 @@ class BoundedGaussianMechanism:
     def add_bounded_noise(self, gradient: torch.Tensor, sigma_sq: float,
                           epsilon: float) -> torch.Tensor:
         """Add bounded Gaussian noise: N(0, sigma^2) clamped to [-b, b]."""
-        noise = torch.randn_like(gradient) * math.sqrt(max(sigma_sq, 1e-12))
+        if self._gen is not None:
+            raw = torch.randn(gradient.shape, generator=self._gen,
+                              device=gradient.device, dtype=gradient.dtype)
+        else:
+            raw = torch.randn_like(gradient)
+        noise = raw * math.sqrt(max(sigma_sq, 1e-12))
         b = self.compute_bound(epsilon)
         bounded = torch.clamp(noise, -b, b)
         return gradient + bounded

@@ -96,11 +96,65 @@ class MetricsTracker:
                 f"Avg kurtosis (honest):      {avg('kurtosis_honest'):.6f}",
                 f"Avg kurtosis (attacker):    {avg('kurtosis_attacker'):.2f}",
             ]
+
+        per_node_block = self._per_node_epsilon_block()
+        if per_node_block:
+            lines += ["", *per_node_block]
+
         lines.append("=" * 60)
         report = "\n".join(lines)
         with open(self.output_dir / "report.txt", "w") as f:
             f.write(report + "\n")
         return report
+
+    def _per_node_epsilon_block(self) -> List[str]:
+        """Build per-node privacy cost table from last round's node data.
+
+        Returns [] if node_rounds is empty or no node has `eps_n`.
+        Used by algorithms that track per-node epsilon (e.g., adaptive-noise).
+        """
+        if not self.node_rounds:
+            return []
+        last = self.node_rounds[-1]["nodes"]
+        if not any("eps_n" in nd for nd in last.values()):
+            return []
+
+        rows = []
+        honest_eps = []
+        n_frozen = 0
+        for nid, nd in sorted(last.items(), key=lambda x: int(x[0])):
+            is_atk = nd.get("is_attacker", False)
+            if is_atk:
+                rows.append(
+                    f"Node {int(nid):3d} (attacker)  eps = —          "
+                    f"sigma = —       (not tracked)")
+                continue
+            eps_n = nd.get("eps_n", 0.0)
+            sigma_n = nd.get("sigma_n", 0.0)
+            frozen = nd.get("frozen", False)
+            honest_eps.append(eps_n)
+            if frozen:
+                n_frozen += 1
+            rows.append(
+                f"Node {int(nid):3d} (honest  )  eps = {eps_n:8.4f}  "
+                f"sigma = {sigma_n:6.3f}  frozen = {frozen}")
+
+        if not honest_eps:
+            return []
+        eps_max = max(honest_eps)
+        eps_avg = sum(honest_eps) / len(honest_eps)
+        var = sum((e - eps_avg) ** 2 for e in honest_eps) / len(honest_eps)
+        eps_std = var ** 0.5
+
+        return [
+            "=== PER-NODE PRIVACY COST (final round) ===",
+            *rows,
+            "-" * 60,
+            f"eps_system (max honest): {eps_max:.4f}",
+            f"eps_avg (honest):        {eps_avg:.4f}",
+            f"eps_std (honest):        {eps_std:.4f}",
+            f"n_frozen:                {n_frozen}/{len(honest_eps)}",
+        ]
 
     # ── Plots ─────────────────────────────────────────────────────────
 

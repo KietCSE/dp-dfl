@@ -43,18 +43,28 @@ class CIFAR10Dataset(BaseDataset):
         return train, test
 
     def split(self, dataset: Dataset, n_nodes: int,
-              mode: str = "iid", alpha: float = 0.5) -> Dict[int, Subset]:
+              mode: str = "iid", alpha: float = 0.5,
+              samples_per_node: int = None) -> Dict[int, Subset]:
         if mode == "iid":
-            return self._split_iid(dataset, n_nodes)
+            return self._split_iid(dataset, n_nodes, samples_per_node)
         elif mode == "dirichlet":
             return self._split_dirichlet(dataset, n_nodes, alpha)
         else:
             raise ValueError(f"Unknown split mode: {mode}")
 
-    def _split_iid(self, dataset: Dataset, n_nodes: int) -> Dict[int, Subset]:
-        indices = np.random.permutation(len(dataset))
-        chunks = np.array_split(indices, n_nodes)
-        return {i: Subset(dataset, chunk.tolist()) for i, chunk in enumerate(chunks)}
+    def _split_iid(self, dataset: Dataset, n_nodes: int,
+                    samples_per_node: int = None) -> Dict[int, Subset]:
+        """IID split. Disjoint (default) or overlap-sampled if samples_per_node set."""
+        n_total = len(dataset)
+        if samples_per_node is None:
+            indices = np.random.permutation(n_total)
+            chunks = np.array_split(indices, n_nodes)
+            return {i: Subset(dataset, chunk.tolist()) for i, chunk in enumerate(chunks)}
+        k = min(samples_per_node, n_total)
+        return {
+            i: Subset(dataset, np.random.permutation(n_total)[:k].tolist())
+            for i in range(n_nodes)
+        }
 
     def _split_dirichlet(self, dataset: Dataset, n_nodes: int,
                           alpha: float) -> Dict[int, Subset]:

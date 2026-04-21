@@ -13,7 +13,8 @@ from dpfl.core.base_noise_mechanism import BaseNoiseMechanism
 class DPSGDTrainer:
     """Local training for a single node. Noise injection timing controlled by noise_mode."""
 
-    def __init__(self, config: TrainingConfig, dp_config: DPConfig, device=None):
+    def __init__(self, config: TrainingConfig, dp_config: DPConfig, device=None,
+                 data_gen: "torch.Generator" = None):
         self.lr = config.lr
         self.batch_size = config.batch_size
         self.epochs = config.local_epochs
@@ -21,6 +22,9 @@ class DPSGDTrainer:
         self.noise_mult = dp_config.noise_mult
         self.noise_mode = dp_config.noise_mode
         self.device = device or torch.device("cpu")
+        # Isolated RNG for DataLoader shuffle. If None, falls back to global
+        # torch RNG (legacy behavior).
+        self.data_gen = data_gen
 
     def train(self, model: BaseModel, dataset: Subset,
               noise_mechanism: BaseNoiseMechanism,
@@ -55,7 +59,8 @@ class DPSGDTrainer:
         """Per-batch: per-sample grads -> clip -> noise -> SGD update."""
         initial_params = model.get_flat_params().clone()
         loader = DataLoader(dataset, batch_size=self.batch_size,
-                            shuffle=True, drop_last=True)
+                            shuffle=True, drop_last=True,
+                            generator=self.data_gen)
         n_steps = 0
 
         for _ in range(self.epochs):
@@ -85,7 +90,8 @@ class DPSGDTrainer:
         """Standard mini-batch SGD without per-sample clipping."""
         initial_params = model.get_flat_params().clone()
         loader = DataLoader(dataset, batch_size=self.batch_size,
-                            shuffle=True, drop_last=True)
+                            shuffle=True, drop_last=True,
+                            generator=self.data_gen)
         n_steps = 0
 
         for _ in range(self.epochs):

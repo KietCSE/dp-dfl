@@ -23,6 +23,7 @@ training:
 
 dp:
   noise_mode: none        # No DP — Trimmed Mean defense only
+  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 
 attack:
   type: scale
