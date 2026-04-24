@@ -16,11 +16,11 @@ topology:
   seed: 42
 
 training:
-  n_rounds: 50
+  n_rounds: 100
   local_epochs: 1
   batch_size: 64
-  lr: 0.01
-  n_workers: 5
+  lr: 0.001
+  n_workers: 10
 
 dp:
   noise_mode: none        # No DP — FLTrust defense only
