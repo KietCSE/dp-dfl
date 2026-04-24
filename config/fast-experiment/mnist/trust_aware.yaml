@@ -1,8 +1,9 @@
 dataset:
   name: mnist
   split:
-    mode: dirichlet
-    alpha: 0.3            # non-IID — harder setting
+    mode: iid
+    samples_per_node: 3000    # each node draws 3000 random samples from 60k pool (overlap)
+    alpha: 1.0                # ignored in iid mode
 
 model:
   name: mlp
@@ -31,7 +32,7 @@ dp:
 
 attack:
   type: scale
-  scale_factor: 3.0
+  scale_factor: -10.0
   start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:

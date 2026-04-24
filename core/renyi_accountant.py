@@ -1,7 +1,15 @@
-"""Renyi DP accountant for DP-SGD with subsampled Gaussian mechanism."""
+"""Renyi DP accountant for DP-SGD with subsampled Gaussian mechanism.
 
-import math
+Backed by Opacus (Meta AI) implementation of the Sampled Gaussian Mechanism
+(Mironov 2019) — tight RDP bounds for subsampled Gaussian, used by all major
+PyTorch DP libraries. Replaces the previous loose approximation
+`RDP(α) ≈ q²·α/(2z²)` which is not a valid upper bound at α ≥ 3 and can
+under-report privacy cost.
+"""
+
 from typing import List
+
+from opacus.accountants.analysis.rdp import compute_rdp, get_privacy_spent
 
 from dpfl.core.base_accountant import BaseAccountant
 from dpfl.registry import register, ACCOUNTANTS
@@ -9,35 +17,56 @@ from dpfl.registry import register, ACCOUNTANTS
 
 @register(ACCOUNTANTS, "renyi_dpsgd")
 class RenyiAccountant(BaseAccountant):
-    """
-    Tracks cumulative RDP cost across DP-SGD steps.
-    eps_step(alpha) = q^2 * alpha / (2 * z^2)  per step.
-    """
+    """Cumulative RDP tracking for DP-SGD via Opacus SGM bounds."""
 
     def __init__(self, alpha_list: List[float], delta: float):
-        self.alpha_list = alpha_list
+        self.alpha_list = [float(a) for a in alpha_list]
         self.delta = delta
-        self.eps_rdp = {a: 0.0 for a in alpha_list}
+        # Per-alpha accumulated RDP cost, aligned with self.alpha_list.
+        self.eps_rdp = {a: 0.0 for a in self.alpha_list}
         self.total_steps = 0
 
     def step(self, n_steps: int, sampling_rate: float, noise_mult: float):
-        """Accumulate n_steps of DP-SGD RDP cost.
-        Uses first-order approximation valid for small q (~0.01)."""
-        for a in self.alpha_list:
-            cost = n_steps * sampling_rate ** 2 * a / (2.0 * noise_mult ** 2)
-            self.eps_rdp[a] += cost
+        """Accumulate n_steps of DP-SGD RDP cost using Opacus SGM.
+
+        noise_mult here is the unit-sensitivity noise multiplier z = σ/C,
+        matching Opacus's `noise_multiplier` convention directly.
+        """
+        if n_steps <= 0:
+            return
+        if sampling_rate <= 0.0:
+            self.total_steps += n_steps
+            return
+        # Guard near-zero noise to avoid NaN/Inf propagation.
+        nm = max(float(noise_mult), 0.01)
+        rdp_vec = compute_rdp(
+            q=float(sampling_rate),
+            noise_multiplier=nm,
+            steps=int(n_steps),
+            orders=self.alpha_list,
+        )
+        for a, cost in zip(self.alpha_list, rdp_vec):
+            self.eps_rdp[a] += float(cost)
         self.total_steps += n_steps
 
+    def _rdp_vector(self) -> List[float]:
+        """Current accumulated RDP vector aligned with self.alpha_list."""
+        return [self.eps_rdp[a] for a in self.alpha_list]
+
     def get_epsilon(self) -> float:
-        """Convert RDP -> (eps, delta)-DP: min over alpha."""
-        return min(
-            self.eps_rdp[a] + math.log(1.0 / self.delta) / (a - 1.0)
-            for a in self.alpha_list
+        """Convert accumulated RDP -> (eps, delta)-DP via Opacus optimizer."""
+        eps, _ = get_privacy_spent(
+            orders=self.alpha_list,
+            rdp=self._rdp_vector(),
+            delta=self.delta,
         )
+        return float(eps)
 
     def get_best_alpha(self) -> float:
-        """Return alpha that gives tightest epsilon bound."""
-        return min(
-            self.alpha_list,
-            key=lambda a: self.eps_rdp[a] + math.log(1.0 / self.delta) / (a - 1.0)
+        """Return alpha giving tightest epsilon bound (per Opacus)."""
+        _, best_alpha = get_privacy_spent(
+            orders=self.alpha_list,
+            rdp=self._rdp_vector(),
+            delta=self.delta,
         )
+        return float(best_alpha)

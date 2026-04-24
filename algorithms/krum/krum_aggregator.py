@@ -37,13 +37,14 @@ class KrumAggregator(BaseAggregator):
         stacked = torch.stack(all_updates)  # (n, D)
         dists = torch.cdist(stacked.unsqueeze(0), stacked.unsqueeze(0)).squeeze(0)  # (n, n)
 
-        # For each update, sum distances to nearest (n - f - 2) neighbors
+        # For each update, sum SQUARED distances to nearest (n - f - 2) neighbors
+        # per Blanchard et al. NeurIPS 2017: s(i) = Σ ||V_i - V_j||_2^2
         k = max(n - self.f - 2, 1)
         scores = []
         for i in range(n):
             sorted_dists, _ = dists[i].sort()
-            # Skip self (distance 0), take next k nearest
-            scores.append(sorted_dists[1:k + 1].sum().item())
+            # Skip self (distance 0), take next k nearest, square-sum
+            scores.append(sorted_dists[1:k + 1].pow(2).sum().item())
 
         # Select top-m updates with smallest scores
         sorted_indices = sorted(range(n), key=lambda i: scores[i])

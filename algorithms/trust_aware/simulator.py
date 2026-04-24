@@ -87,12 +87,19 @@ class TrustAwareDFLSimulator(BaseSimulator):
             logger.debug("Round %d Phase 1 (train+clip): %.2fs, %d nodes, workers=%d",
                          t, time.time() - t0, len(self.nodes), n_workers)
 
-            # Phase 2: Outbound — per-edge noise injection (active senders only)
+            # Phase 2: Outbound — per-edge RDP accounting + noise injection.
+            # Under Poisson subsampling (sampling_rate=q), the per-edge RDP
+            # cost accumulates EVERY round for EVERY honest edge regardless of
+            # whether the sender is active this round — amplification derives
+            # from adversary uncertainty about the sampling coin flip, not
+            # from conditional participation. Only actually inject noise +
+            # build edge_updates for active senders within budget.
+            q = float(self.config.dp.sampling_rate)
             edge_updates = {}
             for node in self.nodes.values():
                 edge_updates[node.id] = {}
-                if node.id not in active_ids:
-                    continue  # inactive: no outbound edges this round
+                if node.is_attacker:
+                    continue  # attackers not in DP accounting
                 clip_e = (self.clipper.get_threshold(node.clip_history)
                           or updates[node.id].norm(2).item())
                 for j in node.neighbors:
@@ -101,7 +108,11 @@ class TrustAwareDFLSimulator(BaseSimulator):
                     rho_ij = rho_base  # trust only affects aggregation, not noise
                     sigma_sq = self.bounded_noise.compute_noise_variance(
                         clip_e, node.n_samples, rho_ij)
-                    self.rdp.step(node, j, clip_e, sigma_sq)
+                    # RDP accounting: SGM-amplified cost, fires every round.
+                    self.rdp.step(node, j, clip_e, sigma_sq, sampling_rate=q)
+                    # Actual send only for active senders within budget.
+                    if node.id not in active_ids:
+                        continue
                     if not self.rdp.can_send(node, j):
                         edge_updates[node.id][j] = None
                         continue

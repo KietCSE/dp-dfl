@@ -406,6 +406,8 @@ Tự tạo file `.yaml` bằng cách chọn giá trị cho từng section:
 
 > **Self-managed DP:** FLAME dùng `aggregation.params` cho noise config. Trust-Aware dùng `trust:` section + `dp.delta/epsilon_max/accountant_params`. Noise Game dùng `noise_game:` section + `dp.clip_bound/delta/epsilon_max/accountant`.
 
+> **Lưu ý RDP formula (breaking change 2026-04-22):** Tất cả 3 accountants (`RenyiAccountant`, `PerNodeRDPAccountant`, `PerNeighborRDPAccountant`) giờ dùng **Opacus** (Meta AI, `opacus==1.4.0`) cho Mironov 2019 tight SGM bound. Runs **trước 2026-04-22** dùng công thức cũ loose `q²·α·C²/(2σ²)` (invalid upper bound ở α ≥ 3) → **ε values cũ không compare được với runs mới** (chênh lệch có thể > 10× ở α cao). Để so sánh, chạy lại experiments cũ với codebase hiện tại.
+
 ### `attack` — Chọn tấn công
 
 | Key | Giá trị | Mô tả |

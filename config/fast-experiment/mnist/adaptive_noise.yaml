@@ -23,8 +23,14 @@ training:
   n_workers: 5
 
 dp:
-  noise_mode: none        # No DP — plain Krum defense only
-  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
+  noise_mode: none        # adaptive_noise simulator self-manages clip+noise per round
+  clip_bound: 2.0
+  delta: 1.0e-5
+  epsilon_max: 100000000.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 1.0
 
 attack:
   type: scale
@@ -32,10 +38,15 @@ attack:
   start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:
-  type: krum
-  params:
-    n_attackers: 4        # expected Byzantine per neighborhood (~40% of 10 neighbors)
-    multi_k: 1
+  type: simple_avg        # no robust filter; defense comes from adaptive DP noise
+  params: {}
+
+adaptive_noise:
+  sigma_0: 1.0
+  sigma_min: 0.01
+  gamma: 0.9
+  beta_min: 0.90
+  epsilon_num: 1.0e-8
 
 output_dir: ./results
 device: auto
