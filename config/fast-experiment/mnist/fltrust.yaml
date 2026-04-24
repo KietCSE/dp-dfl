@@ -11,7 +11,7 @@ model:
 
 topology:
   n_nodes: 50
-  n_attackers: 0          # 40% Byzantine
+  n_attackers: 10          # 40% Byzantine
   n_neighbors: 30
   seed: 42
 
@@ -29,7 +29,7 @@ dp:
 attack:
   type: scale
   scale_factor: -10.0
-  start_round: 20         # clean rounds 0-19, attack activates at round 20
+  start_round: 30         # clean rounds 0-19, attack activates at round 20
 
 aggregation:
   type: fltrust
