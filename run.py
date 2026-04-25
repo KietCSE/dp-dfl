@@ -85,30 +85,23 @@ def build_dpsgd_kurtosis(config, dataset_cls, model_cls, param_dim, tracker, dev
 
 def build_trust_aware(config, dataset_cls, model_cls, param_dim, tracker, device):
     from dpfl.algorithms.trust_aware.simulator import TrustAwareDFLSimulator
-    from dpfl.algorithms.trust_aware.adaptive_clipper import AdaptiveClipper
-    from dpfl.algorithms.trust_aware.bounded_gaussian import BoundedGaussianMechanism
-    from dpfl.algorithms.trust_aware.per_neighbor_accountant import PerNeighborRDPAccountant
+    from dpfl.algorithms.trust_aware.adaptive_clipper import LayerwiseAdaptiveClipper
+    from dpfl.algorithms.trust_aware.bounded_gaussian import LayerwiseBoundedGaussian
+    tc = config.trust
     noise_mechanism = NOISE_MECHANISMS["gaussian"]()
     attack = _build_attack(config)
     aggregator = AGGREGATORS["trust_aware_d2b"](
-        param_dim=param_dim,
-        ema_lambda=config.trust.ema_lambda,
-        gamma_z=config.trust.gamma_z,
-        sigma_floor_z=config.trust.sigma_floor_z,
-        alpha_drop=config.trust.alpha_drop,
-        sigma_floor_drop=config.trust.sigma_floor_drop,
-        gamma_penalty=config.trust.gamma_penalty)
-    alpha_list = config.dp.accountant_params.get(
-        "alpha_list", [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100])
+        theta=tc.theta, gamma=tc.gamma, kappa=tc.kappa,
+        alpha_T=tc.alpha_T, T_min=tc.T_min, beta_soft=tc.beta_soft,
+        beta_m=tc.beta_m, eta_global=tc.eta_global)
+    # Heuristic ε reporting only — D2B-DP itself uses ρ-based noise schedule.
+    accountant = _build_accountant(config)
     return TrustAwareDFLSimulator(
-        config, config.trust, dataset_cls, model_cls,
+        config, tc, dataset_cls, model_cls,
         noise_mechanism, aggregator, attack,
-        AdaptiveClipper(config.trust.clip_window),
-        BoundedGaussianMechanism(eta=config.trust.eta),
-        PerNeighborRDPAccountant(
-            alpha_list=alpha_list, delta=config.dp.delta,
-            epsilon_max=config.dp.epsilon_max),
-        tracker=tracker, device=device)
+        LayerwiseAdaptiveClipper(k=tc.k),
+        LayerwiseBoundedGaussian(bound_k=tc.bound_k),
+        accountant=accountant, tracker=tracker, device=device)
 
 
 def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device):

@@ -122,20 +122,31 @@ class ExperimentConfig(BaseExperimentConfig):
 
 @dataclass
 class TrustConfig:
-    """Hyperparameters for Trust-Aware D2B-DP algorithm."""
-    trust_init: float = 0.5
-    ema_lambda: float = 0.8
+    """Hyperparameters for Trust-Aware D2B-DP algorithm (RMS+Softmax+Momentum).
+
+    Maps directly onto Section 1 of docs/Trust-Aware-D2B-DP.md. Defaults track
+    the recommended values in that table.
+    """
+    # Step 2 — Layer-wise Adaptive Clipping
+    k: int = 5                  # clip history window
+    # Step 3 — DP Budget Schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
     rho_min: float = 0.1
-    rho_max: float = 5.0
+    rho_max: float = 1.0
     beta: float = 0.01
-    gamma_penalty: float = 0.5
-    gamma_z: float = 3.0
-    sigma_floor_z: float = 1e-4
-    alpha_drop: float = 2.0
-    sigma_floor_drop: float = 1e-3
-    clip_window: int = 3
-    temporal_window: int = 5
-    eta: float = 0.1
+    bound_k: float = 3.0        # ±k·σ clamp on injected noise (heuristic)
+    # Step 5 — Anomaly Threshold
+    theta: float = 1.1          # DP tolerance factor
+    gamma: float = 2.5          # threshold relaxation factor
+    kappa: float = 5.0          # threshold decay rate
+    # Step 6 — Trust EMA
+    alpha_T: float = 0.85
+    trust_init: float = 1.0
+    # Step 7 — Softmax Aggregation
+    T_min: float = 0.3          # safe-set inclusion threshold
+    beta_soft: float = 3.0      # softmax temperature
+    # Momentum + Global step
+    beta_m: float = 0.9
+    eta_global: float = 0.01    # global learning rate (often = local lr)
 
 @dataclass
 class TrustAwareExperimentConfig(BaseExperimentConfig):

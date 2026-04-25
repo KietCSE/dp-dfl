@@ -19,12 +19,12 @@ training:
   n_rounds: 100
   local_epochs: 1
   batch_size: 64
-  lr: 0.01
+  lr: 0.001
   n_workers: 5
 
 dp:
   noise_mode: none        # noise-game self-manages strategic noise injection
-  clip_bound: 2.0
+  clip_bound: 10.0       # match dp_fedavg signal magnitude
   delta: 1.0e-5
   epsilon_max: 100000000.0
   accountant_params:
@@ -53,7 +53,7 @@ noise_game:
   two_track: true
   two_track_lambda: 0.7
   beta_strat: 0.5
-  sigma_total: 3.0
+  sigma_total: 2.82      # = 0.282 * clip_bound, matches dp_fedavg noise/signal ratio (28.2%)
   rdp_alpha: 2.0
   nsr_warn: 5.0
 

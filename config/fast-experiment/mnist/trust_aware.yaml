@@ -2,7 +2,7 @@ dataset:
   name: mnist
   split:
     mode: iid
-    samples_per_node: 3000    # each node draws 3000 random samples from 60k pool (overlap)
+    samples_per_node: 1200    # each node draws 1200 random samples from 60k pool (overlap)
     alpha: 1.0                # ignored in iid mode
 
 model:
@@ -10,49 +10,57 @@ model:
   hidden_size: 100
 
 topology:
-  n_nodes: 20
-  n_attackers: 8          # 40% Byzantine
-  n_neighbors: 10
+  n_nodes: 50
+  n_attackers: 0
+  n_neighbors: 30
   seed: 42
 
 training:
   n_rounds: 100
   local_epochs: 1
   batch_size: 64
-  lr: 0.01
-  n_workers: 1
+  lr: 0.001
+  n_workers: 5
 
 dp:
-  noise_mode: none        # trust-aware self-manages per-neighbor bounded Gaussian noise
+  noise_mode: none            # D2B-DP injects per-layer noise itself (Step 3)
   delta: 1.0e-5
   epsilon_max: 100000000.0
+  accountant: renyi_dpsgd
   accountant_params:
     alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
-  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
+  sampling_rate: 1.0
 
 attack:
   type: scale
   scale_factor: -10.0
-  start_round: 20         # clean rounds 0-19, attack activates at round 20
+  start_round: 20
 
 aggregation:
   type: trust_aware_d2b
   params: {}
 
 trust:
-  trust_init: 0.5
-  ema_lambda: 0.8
+  # Step 2 — adaptive clip
+  k: 5
+  bound_k: 3.0
+  # Step 3 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
   rho_min: 0.1
-  rho_max: 5
-  beta: 0.2
-  gamma_penalty: 0.5
-  gamma_z: 3.0
-  sigma_floor_z: 0.0001
-  alpha_drop: 2.0
-  sigma_floor_drop: 0.001
-  clip_window: 3
-  temporal_window: 5
-  eta: 0.1
+  rho_max: 1.0
+  beta: 0.05
+  # Step 5 — anomaly threshold
+  theta: 1.1
+  gamma: 2.5
+  kappa: 5.0
+  # Step 6 — trust EMA
+  alpha_T: 0.85
+  trust_init: 1.0
+  # Step 7 — softmax aggregation
+  T_min: 0.3
+  beta_soft: 3.0
+  # Momentum + global step
+  beta_m: 0.9
+  eta_global: 0.001          # match training.lr for cross-algo signal parity
 
 output_dir: ./results
 device: auto

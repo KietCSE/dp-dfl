@@ -72,6 +72,20 @@ class MetricsTracker:
             vals = [r.get(key, 0) for r in self.rounds]
             return sum(vals) / n if n else 0
 
+        # Detection metrics (P/R/F1) only meaningful when attack is active.
+        # Average them over attack-active rounds (round >= start_round) so
+        # vacuous clean-phase values don't dilute the reported numbers.
+        start_round = self.metadata.get("start_round", 0)
+        attack_rounds = [r for r in self.rounds
+                         if r.get("round", 0) >= start_round]
+        n_attack = len(attack_rounds)
+
+        def avg_attack(key):
+            if not attack_rounds:
+                return 0.0
+            vals = [r.get(key, 0) for r in attack_rounds]
+            return sum(vals) / n_attack
+
         lines = [
             "=" * 60,
             "REPORT: DP-SGD Decentralized Federated Learning",
@@ -81,13 +95,14 @@ class MetricsTracker:
             lines.append(f"Timestamp:                  {timestamp}")
         lines += [
             f"Rounds completed:           {n}",
+            f"Attack-active rounds:       {n_attack}  (from round {start_round})",
             f"Final accuracy:             {last.get('accuracy', 0):.4f}",
             f"Final test loss:            {last.get('test_loss', 0):.4f}",
             f"Final epsilon:              {last.get('epsilon', 0):.2f}",
             f"Best alpha:                 {last.get('best_alpha', 'N/A')}",
-            f"Avg precision:              {avg('precision'):.4f}",
-            f"Avg recall:                 {avg('recall'):.4f}",
-            f"Avg F1 score:               {avg('f1_score'):.4f}",
+            f"Avg precision:              {avg_attack('precision'):.4f}",
+            f"Avg recall:                 {avg_attack('recall'):.4f}",
+            f"Avg F1 score:               {avg_attack('f1_score'):.4f}",
             f"Avg update norm (honest):   {avg('mean_update_norm_honest'):.4f}",
             f"Avg update norm (attacker): {avg('mean_update_norm_attacker'):.4f}",
         ]
