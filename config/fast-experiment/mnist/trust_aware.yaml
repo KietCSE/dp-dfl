@@ -19,7 +19,7 @@ training:
     n_rounds: 50
     local_epochs: 1
     batch_size: 64
-    lr: 0.01
+    lr: 0.001
     n_workers: 5
 
 dp:
@@ -74,11 +74,11 @@ trust:
     # Step 3 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
     rho_min: 0.1
     rho_max: 3.0
-    beta: 0.05
+    beta: 0.1
     # Step 5 — anomaly threshold
-    theta: 1.1
-    gamma: 2.5
-    kappa: 5.0
+    theta: 0.1
+    gamma: 1
+    kappa: 15.0
     # Step 6 — trust EMA
     alpha_T: 0.85
     trust_init: 1.0
