@@ -160,27 +160,41 @@ Layer 1 bảo đảm mỗi gradient đầu vào có sensitivity có hạn và cu
 
 ## 5.1 RDP accounting
 
-Privacy cost tại vòng `t` được tính bằng RDP:
+Privacy cost tại vòng `t` (Mironov 2017, Gaussian Mechanism với sensitivity sau clipping = `C = clip_bound`):
 
 ```math
-\varepsilon_t(\alpha) = \frac{\alpha}{2 \sigma_{DP,t}^2}
+\varepsilon_t(\alpha) = \frac{\alpha \cdot C^2}{2 \, \sigma_{DP,t}^2}
 ```
 
-Tổng chi phí privacy sau `T` vòng là:
+Tương đương dạng noise multiplier `z = σ_DP / C`:
 
 ```math
-\varepsilon_{total} = \sum_{t=1}^T \varepsilon_t(\alpha)
+\varepsilon_t(\alpha) = \frac{\alpha}{2 \, z^2}
+```
+
+Tổng RDP cost sau `T` vòng (composition Mironov 2017 Theorem 5):
+
+```math
+\mathrm{RDP}_{total}(\alpha) = \sum_{t=1}^T \varepsilon_t(\alpha)
 ```
 
 ## 5.2 Ngân sách privacy
 
-Hệ thống phải thỏa:
+Để so sánh với `ε_max` (đơn vị (ε, δ)-DP) phải convert RDP → (ε, δ)-DP qua Mironov 2017 Theorem 8:
 
 ```math
-\varepsilon_{total} \le \varepsilon_{max}
+\varepsilon(\alpha, \delta) = \mathrm{RDP}_{total}(\alpha) + \frac{\log(1/\delta)}{\alpha - 1}
 ```
 
-Do đó Layer 2 chịu trách nhiệm cân bằng giữa mức noise bảo mật và ngân sách privacy có hạn.
+Tối ưu over α:
+
+```math
+\varepsilon^* = \min_{\alpha > 1} \varepsilon(\alpha, \delta) \le \varepsilon_{max}
+```
+
+> **Implementation note**: heuristic scheduler trong `mechanism.py` track `rdp_spent` (RDP_α với α cố định) rồi gọi `compute_eps_dp()` để convert trước khi compare với `epsilon_max`. Privacy claim cuối cùng (trong `report.txt`) dùng Opacus `compute_rdp` + `get_privacy_spent` (tight SGM bounds) — xem `core/renyi_accountant.py`.
+
+Layer 2 chịu trách nhiệm cân bằng giữa mức noise bảo mật và ngân sách privacy có hạn.
 
 ## 5.3 Adaptive scheduler
 
@@ -397,6 +411,8 @@ Trong đó `n_{DP,t}` bảo vệ quyền riêng tư và `n_{strategic,t}` chốn
 ```
 
 Ràng buộc này giữ tổng năng lượng noise trong giới hạn chấp nhận được.
+
+> **Privacy accounting note (CRITICAL)**: khi cap kích hoạt (energy > σ_total²), `_enforce_budget` scale cả `n_DP` và `n_strategic` xuống bằng cùng một factor. Sau cap, σ thực tế của `n_DP` là `σ_eff = ‖n_DP_post‖ / √D`, **không phải** σ_DP pre-cap từ scheduler. Privacy accountant **bắt buộc** phải nhận `σ_eff` (post-cap) — dùng pre-cap σ sẽ under-report ε rất nhiều (factor có thể ~10⁴ hoặc hơn tùy config). Xem `simulator.py` Phase 4 implementation.
 
 ---
 

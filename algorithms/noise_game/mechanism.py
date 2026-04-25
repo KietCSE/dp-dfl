@@ -37,8 +37,10 @@ class NoiseGameMechanism:
         self.beta_strat = beta_strat
         self.sigma_total = sigma_total
         self.alpha_rd = alpha_rd
-        # Internal RDP budget tracker (heuristic for adaptive scheduler)
-        self.epsilon_spent = 0.0
+        # Internal RDP budget tracker (heuristic for adaptive scheduler).
+        # NOTE (Bug #2 fix): this is RDP_α, NOT (ε, δ)-DP epsilon. Use
+        # compute_eps_dp() to convert before comparing against epsilon_max.
+        self.rdp_spent = 0.0
         # DP sigma floor: minimum sigma for (eps_max, delta)-DP
         self._sigma_floor = clip_bound * math.sqrt(
             2.0 * math.log(1.25 / delta)) / epsilon_max
@@ -57,6 +59,18 @@ class NoiseGameMechanism:
 
     # -- Layer 2: Adaptive sigma scheduling --
 
+    def compute_eps_dp(self) -> float:
+        """Convert accumulated RDP_α → (ε, δ)-DP via Mironov 2017 Theorem 8.
+
+        ε(α, δ) = RDP_total(α) + log(1/δ) / (α − 1)
+
+        Returns ∞ if α ≤ 1 (the conversion is undefined). Used by the adaptive
+        sigma scheduler to compare consumed privacy against `epsilon_max`.
+        """
+        if self.alpha_rd <= 1.0:
+            return float("inf")
+        return self.rdp_spent + math.log(1.0 / self.delta) / (self.alpha_rd - 1.0)
+
     def compute_sigma_dp(self, round_t: int,
                          attack_signal: float) -> float:
         """Adaptive DP noise scale: f(budget, attack_signal).
@@ -65,8 +79,10 @@ class NoiseGameMechanism:
         Returns sigma_DP >= sigma_floor (DP guarantee).
         """
         base = self.sigma_0 * math.exp(-self.anneal_kappa * round_t)
-        eps_remain = max(0.0, self.epsilon_max - self.epsilon_spent)
-        budget_factor = max(0.05, eps_remain / self.epsilon_max)
+        # Bug #2 fix: convert RDP → (ε, δ)-DP before comparing to epsilon_max.
+        eps_consumed = self.compute_eps_dp()
+        eps_remain = max(0.0, self.epsilon_max - eps_consumed)
+        budget_factor = max(0.05, eps_remain / max(self.epsilon_max, 1e-12))
         threat_factor = 1.0 + attack_signal
         return max(base * budget_factor * threat_factor, self._sigma_floor)
 
@@ -191,11 +207,11 @@ class NoiseGameMechanism:
         g_norm = gradient.norm().item()
         nsr = total_noise.norm().item() / (g_norm + 1e-12)
 
-        # Track approximate RDP cost using fixed Renyi order and clipping bound.
-        # After clipping, sensitivity is C = clip_bound, so
-        # epsilon_t(alpha) = alpha * C^2 / (2 * sigma_dp^2).
+        # Track approximate RDP_α cost using fixed Renyi order and clip bound.
+        # Mironov 2017 Gaussian RDP:  RDP(α) = α · C² / (2 · σ²)
+        # Note: this is RDP, NOT (ε, δ)-DP. Use compute_eps_dp() to convert.
         if sigma_dp > 1e-12:
-            self.epsilon_spent += self.alpha_rd * self.clip_bound ** 2 / (
+            self.rdp_spent += self.alpha_rd * self.clip_bound ** 2 / (
                 2.0 * sigma_dp ** 2)
 
         metrics = {
@@ -206,6 +222,7 @@ class NoiseGameMechanism:
             "n_strategic_norm": float(n_strategic.norm().item()),
             "total_noise_norm": float(total_noise.norm().item()),
             "nsr": nsr,
-            "epsilon_spent": self.epsilon_spent,
+            "rdp_spent": self.rdp_spent,
+            "eps_dp_internal": self.compute_eps_dp(),
         }
         return total_noise, metrics
