@@ -133,7 +133,7 @@ class TrustConfig:
     rho_min: float = 0.1
     rho_max: float = 1.0
     beta: float = 0.01
-    bound_k: float = 3.0        # ±k·σ clamp on injected noise (heuristic)
+    bound_eta: float = 0.5      # DP sensitivity parameter for noise bound
     # Step 5 — Anomaly Threshold
     theta: float = 1.1          # DP tolerance factor
     gamma: float = 2.5          # threshold relaxation factor

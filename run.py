@@ -100,7 +100,7 @@ def build_trust_aware(config, dataset_cls, model_cls, param_dim, tracker, device
         config, tc, dataset_cls, model_cls,
         noise_mechanism, aggregator, attack,
         LayerwiseAdaptiveClipper(k=tc.k),
-        LayerwiseBoundedGaussian(bound_k=tc.bound_k),
+        LayerwiseBoundedGaussian(bound_eta=tc.bound_eta),
         accountant=accountant, tracker=tracker, device=device)
 
 
