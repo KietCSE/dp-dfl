@@ -117,7 +117,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
         if V_agg_prev is None:
             V_agg_prev = torch.zeros_like(own_update)
         V_agg = self.beta_m * V_agg_prev + (1.0 - self.beta_m) * S_agg
-        new_params = W_old + self.eta_global * V_agg
+        new_params = W_old - self.eta_global * V_agg
 
         return AggregationResult(
             new_params=new_params,
