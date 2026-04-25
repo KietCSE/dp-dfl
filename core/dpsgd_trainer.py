@@ -44,7 +44,8 @@ class DPSGDTrainer:
         if self.noise_mode == "per_step":
             return self._train_dpsgd_per_step(model, dataset, noise_mechanism, apply_noise)
 
-        update, n_steps = self._train_standard_sgd(model, dataset)
+        # update, n_steps = self._train_standard_sgd(model, dataset)
+        update, n_steps = self._train_federated_sgd(model, dataset)
 
         if self.noise_mode == "post_training":
             update = self._apply_post_training_dp(update, noise_mechanism, apply_noise)
@@ -112,6 +113,35 @@ class DPSGDTrainer:
 
         update = model.get_flat_params() - initial_params
         return update, n_steps
+    
+    def _train_federated_sgd(self, model: BaseModel,
+                         dataset: Subset) -> Tuple[torch.Tensor, int]:
+        """Calculates and returns raw gradients for FedSGD."""
+        
+        # In FedSGD, we typically use the whole dataset as one batch
+        # and we only do ONE pass (epoch = 1)
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
+        
+        # Put model in eval mode if you are only extracting gradients
+        # to avoid triggering BatchNorm/Dropout updates during gradient calculation
+        model.train() 
+
+        for x_batch, y_batch in loader:
+            x_batch = x_batch.to(self.device)
+            y_batch = y_batch.to(self.device)
+
+            out = model(x_batch)
+            loss = F.cross_entropy(out, y_batch)
+            
+            model.zero_grad()
+            loss.backward() # This populates p.grad for all parameters
+
+            # Extract and flatten the raw gradients!
+            # We do NOT update the weights (no p -= lr * p.grad)
+            gradients = torch.cat([p.grad.view(-1) for p in model.parameters()])
+
+        # Return the raw gradients and the number of samples processed
+        return gradients, len(dataset)
 
     # -- post-training DP: clip + noise on final update --
 
