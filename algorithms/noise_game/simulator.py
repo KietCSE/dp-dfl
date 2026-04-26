@@ -1,6 +1,7 @@
 """Noise-game DFL simulator: orchestrates the full strategic noise algorithm."""
 
 import logging
+import math
 
 import numpy as np
 import torch
@@ -30,6 +31,9 @@ class NoiseGameDFLSimulator(BaseSimulator):
                          accountant=accountant, tracker=tracker, device=device)
         self.ng = ng_config
         self.game_mechanism = game_mechanism
+        # Wire isolated RNG into the strategic noise mechanism.
+        if hasattr(self.game_mechanism, "set_generator"):
+            self.game_mechanism.set_generator(self.noise_gen)
 
     def _create_node(self, node_id, model, data, is_attacker):
         node = NoiseGameNode(node_id, model, data, is_attacker, self.ng)
@@ -39,6 +43,9 @@ class NoiseGameDFLSimulator(BaseSimulator):
     def run(self):
         """Main loop: T rounds of noise-game DFL."""
         for t in range(self.config.training.n_rounds):
+            # Step 0: Deterministic Poisson client subsampling.
+            active_ids = self._sample_active_nodes(t)
+
             # Phase 1: Local training (no noise — game handles it)
             raw_updates, all_steps = self._train_all_nodes(apply_noise=False, round_t=t)
 
@@ -50,7 +57,9 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 factor = min(1.0, C / (norm + 1e-12))
                 clipped[nid] = upd * factor
 
-            # Phase 2: Noise-game pipeline (honest nodes only)
+            # Phase 2: Noise-game pipeline (active honest nodes only).
+            # Inactive honest nodes don't contribute updates this round.
+            # Attackers still contribute their clipped updates (always active).
             final_updates = {}
             extra_node = {}
             sigma_dps = {}
@@ -59,6 +68,8 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 if node.is_attacker:
                     final_updates[nid] = g
                     continue
+                if nid not in active_ids:
+                    continue  # inactive honest: no update contributed
 
                 # SCAFFOLD variance reduction
                 if self.ng.scaffold:
@@ -96,17 +107,25 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 extra_node[nid] = {
                     "trust": metrics["trust"],
                     "noise_norm": metrics["total_noise_norm"],
+                    "n_dp_norm": metrics["n_dp_norm"],   # POST-cap (used for ε)
                     "nsr": metrics["nsr"],
                     "sigma_dp": metrics["sigma_dp"],
                 }
 
-            # Phase 3: Aggregation
+            # Phase 3: Aggregation (active nodes only)
+            attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
-            per_node_detection = {}
-            node_agg_metrics = {}
+            per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
+            node_agg_metrics = {nid: {} for nid in self.nodes}
 
             for node in self.nodes.values():
-                neighbor_upds = {j: final_updates[j] for j in node.neighbors}
+                if node.id not in active_ids:
+                    continue  # inactive: skip aggregation
+                if node.id not in final_updates:
+                    continue  # safety: no final update produced (shouldn't happen)
+                neighbor_upds = {
+                    j: final_updates[j] for j in node.neighbors
+                    if j in final_updates and j in active_ids}
                 result = self.aggregator.aggregate(
                     final_updates[node.id], node.model.get_flat_params(), neighbor_upds)
                 node_agg_metrics[node.id] = result.node_metrics
@@ -119,22 +138,37 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     node.model.set_flat_params(result.new_params)
 
                 tp, fp, fn, tn = self._compute_detection(
-                    result.flagged_ids, result.clean_ids, node.neighbors)
+                    result.flagged_ids, result.clean_ids, node.neighbors,
+                    attack_active=attack_active)
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 
-            # Phase 4: Privacy accounting
+            # Phase 4: Privacy accounting (Bug #3 fix — see audit report)
+            # Use POST-cap DP noise norm: budget enforcer scales n_dp by `factor`
+            # so the actual injected DP noise has σ_eff = ‖n_dp_post‖ / √D.
+            # Pre-cap σ_dp (the scheduler output) under-states real noise after
+            # the σ_total² cap kicks in, leading to ~10,000× ε under-reporting.
             epsilon = 0.0
             if self.accountant is not None:
                 honest_steps = next(
                     s for nid, s in all_steps.items() if nid not in self.attacker_ids)
                 q_batch = self.config.training.batch_size / self.nodes[
                     self.config.topology.n_attackers].n_samples
-                avg_sigma_dp = (np.mean(list(sigma_dps.values()))
-                                if sigma_dps else self.game_mechanism.sigma_0)
-                effective_mult = max(avg_sigma_dp / (C + 1e-12), 0.01)
+                post_cap_dp_norms = [
+                    e["n_dp_norm"] for e in extra_node.values()
+                    if "n_dp_norm" in e]
+                if post_cap_dp_norms:
+                    avg_n_dp_norm = float(np.mean(post_cap_dp_norms))
+                    sigma_eff = avg_n_dp_norm / math.sqrt(max(self.param_dim, 1))
+                    effective_mult = max(sigma_eff / (C + 1e-12), 0.01)
+                else:
+                    effective_mult = 0.01
                 self.accountant.step(honest_steps, q_batch, effective_mult)
                 epsilon = self.accountant.get_epsilon()
+
+            # Pre-cap σ kept for diagnostic reporting only (not for ε).
+            avg_sigma_dp = (float(np.mean(list(sigma_dps.values())))
+                            if sigma_dps else 0.0)
 
             # Phase 5: Evaluate + log
             honest_trust = [m["trust"] for m in extra_node.values()]
@@ -145,7 +179,10 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 extra_node_data=extra_node,
                 extra_round_metrics={
                     "avg_trust": float(np.mean(honest_trust)) if honest_trust else 0.0,
-                    "avg_sigma_dp": float(avg_sigma_dp) if sigma_dps else 0.0,
+                    "avg_sigma_dp_precap": avg_sigma_dp,           # diagnostic
+                    "avg_n_dp_norm_postcap": float(np.mean(
+                        [e.get("n_dp_norm", 0.0) for e in extra_node.values()]))
+                        if extra_node else 0.0,
                     "avg_nsr": float(np.mean(honest_nsr)) if honest_nsr else 0.0,
                 })
 

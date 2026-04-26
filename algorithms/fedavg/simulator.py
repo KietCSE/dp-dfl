@@ -31,14 +31,22 @@ class FedAvgSimulator(BaseSimulator):
     def run(self):
         """Main loop: train -> weighted aggregate -> account -> log."""
         for t in range(self.config.training.n_rounds):
+            attack_active = t >= self.config.attack.start_round
+            # Step 0: Deterministic Poisson client subsampling.
+            active_ids = self._sample_active_nodes(t)
+
             updates, all_steps = self._train_all_nodes(apply_noise=True, round_t=t)
 
             total_tp = total_fp = total_fn = total_tn = 0
-            per_node_detection = {}
-            node_agg_metrics = {}
+            per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
+            node_agg_metrics = {nid: {} for nid in self.nodes}
 
             for node in self.nodes.values():
-                neighbor_updates = {j: updates[j] for j in node.neighbors}
+                if node.id not in active_ids:
+                    continue  # inactive this round
+                neighbor_updates = {
+                    j: updates[j] for j in node.neighbors
+                    if j in updates and j in active_ids}
                 result = self.aggregator.aggregate(
                     updates[node.id], node.model.get_flat_params(),
                     neighbor_updates, own_node_id=node.id)
@@ -46,7 +54,8 @@ class FedAvgSimulator(BaseSimulator):
                 node_agg_metrics[node.id] = result.node_metrics
 
                 tp, fp, fn, tn = self._compute_detection(
-                    result.flagged_ids, result.clean_ids, node.neighbors)
+                    result.flagged_ids, result.clean_ids, node.neighbors,
+                    attack_active=attack_active)
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 

@@ -21,35 +21,38 @@ training:
   n_workers: 1
 
 dp:
-  noise_mode: none        # trust-aware self-manages per-neighbor bounded Gaussian noise
+  noise_mode: none            # D2B-DP injects per-layer noise itself (Step 3)
   delta: 1.0e-5
   epsilon_max: 100000000.0
+  accountant: renyi_dpsgd
   accountant_params:
     alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 1.0
 
 attack:
   type: scale
-  scale_factor: 3.0
-  start_round: 20         # clean rounds 0-19, attack activates at round 20
+  scale_factor: -10.0
+  start_round: 20
 
 aggregation:
   type: trust_aware_d2b
   params: {}
 
 trust:
-  trust_init: 0.5
-  ema_lambda: 0.8
+  k: 5
+  bound_k: 3.0
   rho_min: 0.1
-  rho_max: 5.0
-  beta: 0.01
-  gamma_penalty: 0.5
-  gamma_z: 3.0
-  sigma_floor_z: 0.0001
-  alpha_drop: 2.0
-  sigma_floor_drop: 0.001
-  clip_window: 3
-  temporal_window: 5
-  eta: 0.1
+  rho_max: 1.0
+  beta: 0.05
+  theta: 1.1
+  gamma: 2.5
+  kappa: 5.0
+  alpha_T: 0.85
+  trust_init: 1.0
+  T_min: 0.3
+  beta_soft: 3.0
+  beta_m: 0.9
+  eta_global: 0.01
 
 output_dir: ./results
 device: auto

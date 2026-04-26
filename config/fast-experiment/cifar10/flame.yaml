@@ -22,6 +22,7 @@ training:
 
 dp:
   noise_mode: none        # FLAME self-manages DP noise via aggregation.params
+  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 
 attack:
   type: scale

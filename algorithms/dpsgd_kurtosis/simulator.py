@@ -17,23 +17,35 @@ class DFLSimulator(BaseSimulator):
     def run(self):
         """Main loop: train (with DP noise) → aggregate → account → log."""
         for t in range(self.config.training.n_rounds):
+            attack_active = t >= self.config.attack.start_round
+            # Step 0: Deterministic Poisson client subsampling (q = dp.sampling_rate).
+            # q=1.0 => all nodes active (backward-compat). Same seed+t yields
+            # identical active_ids across algorithms for fair comparison.
+            active_ids = self._sample_active_nodes(t)
+
             # Step 1: All nodes train with DP-SGD noise (apply_noise=True)
             updates, all_steps = self._train_all_nodes(apply_noise=True, round_t=t)
 
-            # Step 2: Aggregate with defense filtering
+            # Step 2: Aggregate with defense filtering (active nodes only).
+            # Init detection/metrics for ALL nodes so _log_round iterates without KeyError.
             total_tp, total_fp, total_fn, total_tn = 0, 0, 0, 0
-            per_node_detection = {}
-            node_agg_metrics = {}
+            per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
+            node_agg_metrics = {nid: {} for nid in self.nodes}
 
             for node in self.nodes.values():
-                neighbor_updates = {j: updates[j] for j in node.neighbors}
+                if node.id not in active_ids:
+                    continue  # inactive this round: skip aggregation
+                neighbor_updates = {
+                    j: updates[j] for j in node.neighbors
+                    if j in updates and j in active_ids}
                 result = self.aggregator.aggregate(
                     updates[node.id], node.model.get_flat_params(), neighbor_updates)
                 node.model.set_flat_params(result.new_params)
                 node_agg_metrics[node.id] = result.node_metrics
 
                 tp, fp, fn, tn = self._compute_detection(
-                    result.flagged_ids, result.clean_ids, node.neighbors)
+                    result.flagged_ids, result.clean_ids, node.neighbors,
+                    attack_active=attack_active)
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 

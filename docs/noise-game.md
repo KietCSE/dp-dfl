@@ -220,6 +220,7 @@ Layer 4 đảm bảo rằng dù đã thêm noise mạnh, quá trình tối ưu h
 
 ### Constraint tổng năng lượng noise
 
+<<<<<<< HEAD
 - Tổng năng lượng noise phải thỏa:
   ```math
   \|n_{DP}\|^2 + \|n_{strategic}\|^2 \le \sigma_{total}^2
@@ -239,6 +240,77 @@ Layer 4 đảm bảo rằng dù đã thêm noise mạnh, quá trình tối ưu h
 ### Ý nghĩa
 
 Constraint và NSR giúp cân bằng giữa privacy/robustness và chất lượng gradient. Khi noise quá lớn, system biết phải giảm cường độ hoặc điều chỉnh tham số.
+=======
+Privacy cost tại vòng `t` (Mironov 2017, Gaussian Mechanism với sensitivity sau clipping = `C = clip_bound`):
+
+```math
+\varepsilon_t(\alpha) = \frac{\alpha \cdot C^2}{2 \, \sigma_{DP,t}^2}
+```
+
+Tương đương dạng noise multiplier `z = σ_DP / C`:
+
+```math
+\varepsilon_t(\alpha) = \frac{\alpha}{2 \, z^2}
+```
+
+Tổng RDP cost sau `T` vòng (composition Mironov 2017 Theorem 5):
+
+```math
+\mathrm{RDP}_{total}(\alpha) = \sum_{t=1}^T \varepsilon_t(\alpha)
+```
+
+## 5.2 Ngân sách privacy
+
+Để so sánh với `ε_max` (đơn vị (ε, δ)-DP) phải convert RDP → (ε, δ)-DP qua Mironov 2017 Theorem 8:
+
+```math
+\varepsilon(\alpha, \delta) = \mathrm{RDP}_{total}(\alpha) + \frac{\log(1/\delta)}{\alpha - 1}
+```
+
+Tối ưu over α:
+
+```math
+\varepsilon^* = \min_{\alpha > 1} \varepsilon(\alpha, \delta) \le \varepsilon_{max}
+```
+
+> **Implementation note**: heuristic scheduler trong `mechanism.py` track `rdp_spent` (RDP_α với α cố định) rồi gọi `compute_eps_dp()` để convert trước khi compare với `epsilon_max`. Privacy claim cuối cùng (trong `report.txt`) dùng Opacus `compute_rdp` + `get_privacy_spent` (tight SGM bounds) — xem `core/renyi_accountant.py`.
+
+Layer 2 chịu trách nhiệm cân bằng giữa mức noise bảo mật và ngân sách privacy có hạn.
+
+## 5.3 Adaptive scheduler
+
+Một bộ điều phối mẫu có dạng:
+
+```math
+\sigma_{DP,t} = f(\varepsilon_{remain}, trust_t, attack_t)
+```
+
+Trong đó:
+
+- `\varepsilon_{remain}` là ngân sách privacy còn lại,
+- `trust_t` đo độ ổn định của gradient,
+- `attack_t` là tín hiệu chỉ báo tấn công.
+
+## 5.4 Chiết tách strategic noise
+
+Phần noise chiến lược được chọn theo tỷ lệ:
+
+```math
+\sigma_{strat,t} = \beta_t \cdot \sigma_{DP,t}
+```
+
+Trong đó `\beta_t` điều chỉnh phần noise dành cho robustness so với privacy.
+
+## 5.5 Logic điều khiển
+
+Các quy tắc chung:
+
+- `trust thấp` → tăng `\sigma_{DP,t}` và `\sigma_{strat,t}`
+- `attack cao` → tăng noise để tăng robustness
+- `budget thấp` → giảm `\sigma_{DP,t}` để tiết kiệm privacy
+
+Layer 2 là bộ điều tiết trung tâm của hệ thống.
+>>>>>>> 78726ecd3673b3984535b4e7fdec1d06b5ff1fed
 
 ---
 
@@ -339,4 +411,51 @@ Triển khai hiện tại đáp ứng đầy đủ kiến trúc 4 lớp trong `n
 - Layer 3 xây noise chiến lược có cấu trúc hướng attack, vuông góc và phổ-aware.
 - Layer 4 duy trì recovery và cập nhật mô hình ổn định.
 
+<<<<<<< HEAD
 Báo cáo này đã làm rõ từng bước thực hiện, lý do chọn tham số và các trade-off chính. Nếu cần, bước tiếp theo có thể là đánh giá thực nghiệm với metrics `avg_nsr`, `avg_sigma_dp`, và so sánh accuracy/trust trên CIFAR-10/MNIST.
+=======
+Trong đó `n_{DP,t}` bảo vệ quyền riêng tư và `n_{strategic,t}` chống tấn công.
+
+## 9.2 Ràng buộc tổng noise
+
+```math
+\|n_{DP,t}\|^2 + \|n_{strategic,t}\|^2 \le \sigma_{total}^2
+```
+
+Ràng buộc này giữ tổng năng lượng noise trong giới hạn chấp nhận được.
+
+> **Privacy accounting note (CRITICAL)**: khi cap kích hoạt (energy > σ_total²), `_enforce_budget` scale cả `n_DP` và `n_strategic` xuống bằng cùng một factor. Sau cap, σ thực tế của `n_DP` là `σ_eff = ‖n_DP_post‖ / √D`, **không phải** σ_DP pre-cap từ scheduler. Privacy accountant **bắt buộc** phải nhận `σ_eff` (post-cap) — dùng pre-cap σ sẽ under-report ε rất nhiều (factor có thể ~10⁴ hoặc hơn tùy config). Xem `simulator.py` Phase 4 implementation.
+
+---
+
+# 10. Hệ thống điều khiển noise
+
+## 10.1 Tỷ lệ noise/tín hiệu
+
+```math
+NSR = \frac{\|n\|}{\|g\|}
+```
+
+NSR đo mức độ nhiễu so với tín hiệu gradient.
+
+## 10.2 Hành vi thích nghi
+
+| Giai đoạn | Mức noise  |
+| --------- | ---------- |
+| Early     | Cao        |
+| Mid       | Trung bình |
+| Late      | Thấp       |
+
+Chiến lược là dùng nhiều noise khi hệ thống mới bắt đầu hoặc khi tấn công mạnh, rồi giảm dần khi mô hình ổn định.
+
+---
+
+# 11. Đóng góp chính
+
+1. Công thức game-theoretic để thiết kế noise.
+2. Tách biệt rõ ràng giữa noise privacy và noise chiến lược.
+3. Điều phối noise adaptative bằng RDP.
+4. Noise cấu trúc đa thành phần (theo hướng, vuông góc, phổ-aware).
+5. Tích hợp khôi phục tín hiệu (EMA, momentum, filtering).
+6. Kiến trúc DFL vừa robust vừa giữ độ chính xác.
+>>>>>>> 78726ecd3673b3984535b4e7fdec1d06b5ff1fed

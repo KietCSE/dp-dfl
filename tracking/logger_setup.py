@@ -34,6 +34,9 @@ def setup_experiment_logger(run_dir: str, log_filename: str = "experiment.log") 
         return logger
 
     logger.setLevel(logging.DEBUG)
+    # Don't propagate to root — opacus installs a StreamHandler on root,
+    # which would duplicate every log line on console.
+    logger.propagate = False
 
     # File handler: ALL levels (DEBUG+)
     os.makedirs(run_dir, exist_ok=True)
@@ -68,6 +71,7 @@ def setup_batch_logger(log_dir: str, log_filename: str = "batch.log") -> logging
         return logger
 
     logger.setLevel(logging.DEBUG)
+    logger.propagate = False  # don't hit opacus's root handler
 
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, log_filename)

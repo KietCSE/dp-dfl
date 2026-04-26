@@ -1,0 +1,58 @@
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    samples_per_node: 1200    # each node draws 3000 random samples from 60k pool (overlap)
+    alpha: 1.0                # ignored in iid mode
+
+model:
+  name: mlp
+  hidden_size: 100
+
+topology:
+  n_nodes: 50
+  n_attackers: 0          # 40% Byzantine
+  n_neighbors: 30
+  seed: 42
+
+training:
+  n_rounds: 50
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: none        # adaptive_noise simulator self-manages clip+noise per round
+  clip_bound: 2.0
+  delta: 1.0e-5
+  epsilon_max: 100000000.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 1.0
+
+attack:
+  type: scale
+  scale_factor: -10.0
+  start_round: 20         # clean rounds 0-19, attack activates at round 20
+
+aggregation:
+  type: momentum_kurtosis_avg
+  params:
+    beta_m: 0.95               # EMA smoothing for momentum buffers
+    gamma_mad: 4.0             # MAD threshold: flag when cos < median - 4*MAD
+    warmup_rounds: 10          # disable L1 until buffers converge (~ 1/(1-beta_m) = 20)
+    kurtosis_confidence: 1.96  # 95% confidence Z-score for kurtosis threshold
+    kurtosis_centered: false
+
+adaptive_noise:
+  sigma_0: 0.5
+  sigma_min: 0.5
+  gamma: 0.9
+  beta_min: 0.90
+  epsilon_num: 1.0e-8
+
+output_dir: ./results
+device: auto
+seed: 42

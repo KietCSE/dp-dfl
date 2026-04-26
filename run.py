@@ -26,6 +26,7 @@ import dpfl.core.alie_attack  # noqa: F401
 import dpfl.core.label_flip_attack  # noqa: F401
 import dpfl.core.renyi_accountant  # noqa: F401
 import dpfl.algorithms.dpsgd_kurtosis.kurtosis_aggregator  # noqa: F401
+import dpfl.algorithms.momentum_kurtosis.momentum_kurtosis_aggregator  # noqa: F401
 import dpfl.algorithms.noise_game.simple_avg_aggregator  # noqa: F401
 import dpfl.algorithms.fedavg.fedavg_aggregator  # noqa: F401
 import dpfl.algorithms.trust_aware.aggregator  # noqa: F401
@@ -84,30 +85,23 @@ def build_dpsgd_kurtosis(config, dataset_cls, model_cls, param_dim, tracker, dev
 
 def build_trust_aware(config, dataset_cls, model_cls, param_dim, tracker, device):
     from dpfl.algorithms.trust_aware.simulator import TrustAwareDFLSimulator
-    from dpfl.algorithms.trust_aware.adaptive_clipper import AdaptiveClipper
-    from dpfl.algorithms.trust_aware.bounded_gaussian import BoundedGaussianMechanism
-    from dpfl.algorithms.trust_aware.per_neighbor_accountant import PerNeighborRDPAccountant
+    from dpfl.algorithms.trust_aware.adaptive_clipper import LayerwiseAdaptiveClipper
+    from dpfl.algorithms.trust_aware.bounded_gaussian import LayerwiseBoundedGaussian
+    tc = config.trust
     noise_mechanism = NOISE_MECHANISMS["gaussian"]()
     attack = _build_attack(config)
     aggregator = AGGREGATORS["trust_aware_d2b"](
-        param_dim=param_dim,
-        ema_lambda=config.trust.ema_lambda,
-        gamma_z=config.trust.gamma_z,
-        sigma_floor_z=config.trust.sigma_floor_z,
-        alpha_drop=config.trust.alpha_drop,
-        sigma_floor_drop=config.trust.sigma_floor_drop,
-        gamma_penalty=config.trust.gamma_penalty)
-    alpha_list = config.dp.accountant_params.get(
-        "alpha_list", [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100])
+        theta=tc.theta, gamma=tc.gamma, kappa=tc.kappa,
+        alpha_T=tc.alpha_T, T_min=tc.T_min, beta_soft=tc.beta_soft,
+        beta_m=tc.beta_m, eta_global=tc.eta_global)
+    # Heuristic ε reporting only — D2B-DP itself uses ρ-based noise schedule.
+    accountant = _build_accountant(config)
     return TrustAwareDFLSimulator(
-        config, config.trust, dataset_cls, model_cls,
+        config, tc, dataset_cls, model_cls,
         noise_mechanism, aggregator, attack,
-        AdaptiveClipper(config.trust.clip_window),
-        BoundedGaussianMechanism(eta=config.trust.eta),
-        PerNeighborRDPAccountant(
-            alpha_list=alpha_list, delta=config.dp.delta,
-            epsilon_max=config.dp.epsilon_max),
-        tracker=tracker, device=device)
+        LayerwiseAdaptiveClipper(k=tc.k),
+        LayerwiseBoundedGaussian(bound_k=tc.bound_k),
+        accountant=accountant, tracker=tracker, device=device)
 
 
 def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device):
@@ -158,6 +152,36 @@ build_dp_fedavg = build_fedavg
 build_krum = build_dpsgd_kurtosis
 build_trimmed_mean = build_dpsgd_kurtosis
 build_flame = build_dpsgd_kurtosis
+
+
+def build_adaptive_noise(config, dataset_cls, model_cls, param_dim, tracker, device):
+    import inspect
+    from dpfl.algorithms.adaptive_noise.simulator import AdaptiveNoiseSimulator
+    from dpfl.algorithms.adaptive_noise.per_node_rdp_accountant import PerNodeRDPAccountant
+    noise_mechanism = NOISE_MECHANISMS["gaussian"]()
+    attack = _build_attack(config)
+
+    # Build aggregator from config (simple_avg, kurtosis_avg,
+    # momentum_kurtosis_avg, ...). Pass param_dim only if the constructor
+    # accepts it so dimension-free aggregators (simple_avg) still work.
+    agg_type = config.aggregation.type
+    agg_params = dict(config.aggregation.params or {})
+    agg_cls = AGGREGATORS[agg_type]
+    sig = inspect.signature(agg_cls.__init__)
+    if "param_dim" in sig.parameters:
+        aggregator = agg_cls(param_dim=param_dim, **agg_params)
+    else:
+        aggregator = agg_cls(**agg_params)
+
+    alpha_list = config.dp.accountant_params.get(
+        "alpha_list", [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100])
+    rdp_accountant = PerNodeRDPAccountant(
+        alpha_list=alpha_list, delta=config.dp.delta,
+        epsilon_max=config.dp.epsilon_max)
+    return AdaptiveNoiseSimulator(
+        config, config.adaptive_noise, dataset_cls, model_cls,
+        noise_mechanism, aggregator, attack,
+        rdp_accountant=rdp_accountant, tracker=tracker, device=device)
 
 
 def build_fltrust(config, dataset_cls, model_cls, param_dim, tracker, device):
@@ -230,6 +254,12 @@ ALGORITHMS = {
         "build_fn": build_flame,
         "prefix": "flame",
         "default_config": "config/flame.yaml",
+    },
+    "adaptive-noise": {
+        "config_cls": "dpfl.config.AdaptiveNoiseExperimentConfig",
+        "build_fn": build_adaptive_noise,
+        "prefix": "adaptive_noise",
+        "default_config": "config/adaptive_noise.yaml",
     },
 }
 

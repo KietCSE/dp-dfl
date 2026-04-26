@@ -19,7 +19,8 @@ class KurtosisAvgAggregator(BaseAggregator):
         self.centered = centered
 
     def aggregate(self, own_update: torch.Tensor, own_params: torch.Tensor,
-                  neighbor_updates: Dict[int, torch.Tensor]) -> AggregationResult:
+                  neighbor_updates: Dict[int, torch.Tensor],
+                  **_) -> AggregationResult:
         clean_ids, flagged_ids = [], []
         kurtosis_values = {}
 

@@ -28,6 +28,7 @@ dp:
   epsilon_max: 60 # MNIST: epsilon=5-10
   #  accountant: renyi_dpsgd # used for RDP accounting
   accountant_params:
+<<<<<<< HEAD
     alpha_list:
       [
         1.01,
@@ -56,6 +57,10 @@ dp:
         512,
         1000,
       ]
+=======
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
+>>>>>>> 78726ecd3673b3984535b4e7fdec1d06b5ff1fed
 
 attack:
   type: scale

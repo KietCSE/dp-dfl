@@ -2,6 +2,7 @@
 
 import copy
 import logging
+import random
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from math import prod
@@ -56,13 +57,51 @@ class BaseSimulator(ABC):
         self.attacker_ids: set = set()
         self.param_dim: int = 0
 
+        # Isolated torch RNGs per purpose to prevent cross-algorithm state
+        # drift. Same config.seed yields identical sequences for each purpose,
+        # regardless of how many torch.randn calls other algorithms make.
+        # data_gen MUST be CPU (DataLoader RandomSampler runs on CPU).
+        # noise_gen / attack_gen match self.device (noise is created on device).
+        self.data_gen = self._make_isolated_gen(1_000_007, force_cpu=True)
+        self.noise_gen = self._make_isolated_gen(1_000_013)
+        self.attack_gen = self._make_isolated_gen(1_000_019)
+
+        # Distribute noise_gen / attack_gen to mechanism and attack if they
+        # support set_generator. Algorithm-specific mechanisms (e.g.,
+        # BoundedGaussian, NoiseGameMechanism) are wired by their subclass
+        # simulators in their own __init__.
+        if hasattr(self.noise_mechanism, "set_generator") \
+                and self.noise_mechanism is not None:
+            self.noise_mechanism.set_generator(self.noise_gen)
+        if self.attack is not None and hasattr(self.attack, "set_generator"):
+            self.attack.set_generator(self.attack_gen)
+        if hasattr(self.aggregator, "set_generator"):
+            # FLAME aggregator adds internal DP noise — uses noise_gen.
+            self.aggregator.set_generator(self.noise_gen)
+
+    def _make_isolated_gen(self, seed_multiplier: int,
+                           force_cpu: bool = False) -> torch.Generator:
+        """Create a torch.Generator seeded deterministically from config.seed.
+
+        Device-aware: matches self.device so downstream torch.randn calls can
+        use this generator without device-mismatch errors. For CPU-bound
+        consumers (DataLoader RandomSampler) set force_cpu=True. Seeded with
+        `config.seed * seed_multiplier` (distinct primes per purpose to
+        guarantee independent streams).
+        """
+        gen_device = torch.device("cpu") if force_cpu else self.device
+        gen = torch.Generator(device=gen_device)
+        gen.manual_seed(int(self.config.seed) * int(seed_multiplier))
+        return gen
+
     def setup(self):
         """Initialize data, models, topology, nodes. Shared across all variants."""
         ds = self.dataset_cls()
         train_ds, test_ds = ds.load()
         node_data = ds.split(
             train_ds, self.config.topology.n_nodes,
-            self.config.dataset.split.mode, self.config.dataset.split.alpha)
+            self.config.dataset.split.mode, self.config.dataset.split.alpha,
+            samples_per_node=self.config.dataset.split.samples_per_node)
 
         self.topology = create_regular_graph(
             self.config.topology.n_nodes, self.config.topology.n_neighbors,
@@ -88,7 +127,9 @@ class BaseSimulator(ABC):
                 if node.is_attacker:
                     node.apply_data_attack(self.attack)
 
-        self.trainer = DPSGDTrainer(self.config.training, self.config.dp, self.device)
+        self.trainer = DPSGDTrainer(
+            self.config.training, self.config.dp, self.device,
+            data_gen=self.data_gen)
         self.test_loader = DataLoader(test_ds, batch_size=256, shuffle=False)
 
         logger.info("Setup complete: %d nodes (%d attackers), param_dim=%d, split=%s",
@@ -107,6 +148,38 @@ class BaseSimulator(ABC):
     def run(self):
         """Main algorithm loop. Implement per variant."""
         ...
+
+    def _sample_active_nodes(self, round_t: int) -> Set[int]:
+        """Deterministic Poisson client subsampling per config.dp.sampling_rate.
+
+        Same config.seed + round_t yields the same active set across all
+        algorithms — enables fair cross-algorithm comparison (subsampling
+        schedule is shared; algorithms differ only in noise/aggregation/defense).
+
+        Rules:
+          - Seeded RNG: random.Random(seed * 1_000_003 + round_t).
+          - Iterate nodes in sorted(id) order so coin-flip sequence is stable.
+          - Draw coin for every honest node regardless of frozen state
+            (keeps the RNG stream aligned across algorithms); frozen filter
+            applied after the draw.
+          - Attacker nodes always active (no coin flip consumed).
+          - q >= 1.0 => all non-frozen nodes active (backward-compatible).
+        """
+        q = float(self.config.dp.sampling_rate)
+        rng = random.Random(self.config.seed * 1_000_003 + round_t)
+        active: Set[int] = set()
+        for nid in sorted(self.nodes.keys()):
+            node = self.nodes[nid]
+            if node.is_attacker:
+                if not getattr(node, "frozen", False):
+                    active.add(nid)
+                continue
+            coin = True if q >= 1.0 else (rng.random() < q)
+            if getattr(node, "frozen", False):
+                continue
+            if coin:
+                active.add(nid)
+        return active
 
     def _train_all_nodes(self, apply_noise: bool = True, round_t: int = 0):
         """Train all nodes in parallel. Returns (updates_dict, steps_dict).
@@ -167,12 +240,18 @@ class BaseSimulator(ABC):
             }
         return results
 
-    def _compute_detection(self, flagged_ids, clean_ids, neighbors):
-        """Compute TP/FP/FN/TN from flagged vs actual attackers."""
-        tp = sum(1 for j in flagged_ids if j in self.attacker_ids)
-        fp = sum(1 for j in flagged_ids if j not in self.attacker_ids)
-        fn = sum(1 for j in clean_ids if j in self.attacker_ids)
-        tn = sum(1 for j in clean_ids if j not in self.attacker_ids)
+    def _compute_detection(self, flagged_ids, clean_ids, neighbors,
+                           attack_active: bool = True):
+        """Compute TP/FP/FN/TN from flagged vs actual attackers.
+
+        When attack_active=False, no node is a true attacker this round —
+        flagging an attacker-ID node = FP (not TP), leaving it = TN (not FN).
+        """
+        active_ids = self.attacker_ids if attack_active else set()
+        tp = sum(1 for j in flagged_ids if j in active_ids)
+        fp = sum(1 for j in flagged_ids if j not in active_ids)
+        fn = sum(1 for j in clean_ids if j in active_ids)
+        tn = sum(1 for j in clean_ids if j not in active_ids)
         return tp, fp, fn, tn
 
     def _log_round(self, t, epsilon, updates, per_node_detection,

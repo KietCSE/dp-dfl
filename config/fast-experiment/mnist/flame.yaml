@@ -1,17 +1,18 @@
 dataset:
   name: mnist
   split:
-    mode: dirichlet
-    alpha: 0.3            # non-IID — harder setting
+    mode: iid
+    samples_per_node: 1200    # each node draws 3000 random samples from 60k pool (overlap)
+    alpha: 1.0                # ignored in iid mode
 
 model:
   name: mlp
   hidden_size: 100
 
 topology:
-  n_nodes: 20
-  n_attackers: 8          # 40% Byzantine
-  n_neighbors: 10
+  n_nodes: 50
+  n_attackers: 0          # 40% Byzantine
+  n_neighbors: 30
   seed: 42
 
 training:
@@ -23,10 +24,11 @@ training:
 
 dp:
   noise_mode: none        # FLAME self-manages DP noise via aggregation.params
+  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 
 attack:
   type: scale
-  scale_factor: 3.0
+  scale_factor: -10.0
   start_round: 20         # clean rounds 0-19, attack activates at round 20
 
 aggregation:

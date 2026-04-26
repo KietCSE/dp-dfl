@@ -1,136 +1,139 @@
-"""Trust-Aware D2B aggregator: Z-Score + Cosine + MAD + Trust + Penalty."""
+"""Trust-Aware D2B-DP aggregator (RMS distance + softmax + momentum).
+
+Implements Steps 4-7 of docs/Trust-Aware-D2B-DP.md:
+    Step 4 — RMS distance D_{ij} and cosine similarity C_{ij}
+    Step 5 — D_threshold (decay term vs. C_DP floor) is computed by simulator
+             (it needs per-layer σ² — kept out of the aggregator state)
+    Step 6 — Continuous trust update: Q = p_dist · p_cos, T ← α_T·T + (1-α_T)·Q
+    Step 7 — Softmax aggregation over safe set V = {j | T_{ij} ≥ T_min},
+             then momentum:  V_agg = β_m·V_agg + (1-β_m)·S_agg
+                              W    = W_old + η_global·V_agg
+
+Sign note (doc convention): Sec 7 of the spec writes
+    W_i^(t) = W_i^(t-1) - η_global · V_agg
+but ΔW = W_trained - W_old is positive forward-progress, so subtracting drives
+the model away from the consensus direction. We use `+` to match every other
+delta-aggregation algorithm in this codebase (FedAvg / Krum / Trimmed Mean) and
+to converge toward neighbors' learning signal — interpreting the doc's `-` as a
+notational convention error. State (V_agg, trust_scores) lives on the node.
+"""
+
+import math
+from typing import Dict, Optional
 
 import torch
 import torch.nn.functional as F
-from collections import deque
-from typing import Dict
 
-from dpfl.core.base_aggregator import BaseAggregator, AggregationResult
-from dpfl.registry import register, AGGREGATORS
+from dpfl.core.base_aggregator import AggregationResult, BaseAggregator
+from dpfl.registry import AGGREGATORS, register
 
 
 @register(AGGREGATORS, "trust_aware_d2b")
 class TrustAwareD2BAggregator(BaseAggregator):
-    """Full D2B-DP defense: Z-Score -> Cosine -> Harmonic -> EMA -> MAD -> Filter."""
+    """Soft-trust aggregator with momentum for Trust-Aware D2B-DP."""
 
-    def __init__(self, param_dim: int, ema_lambda: float = 0.8,
-                 gamma_z: float = 3.0, sigma_floor_z: float = 1e-4,
-                 alpha_drop: float = 2.0, sigma_floor_drop: float = 1e-3,
-                 gamma_penalty: float = 0.5):
-        self.ema_lambda = ema_lambda
-        self.gamma_z = gamma_z
-        self.sigma_floor_z = sigma_floor_z
-        self.alpha_drop = alpha_drop
-        self.sigma_floor_drop = sigma_floor_drop
-        self.gamma_penalty = gamma_penalty
+    def __init__(self, theta: float = 1.1, gamma: float = 2.5, kappa: float = 5.0,
+                 alpha_T: float = 0.85, T_min: float = 0.3, beta_soft: float = 3.0,
+                 beta_m: float = 0.9, eta_global: float = 0.01, **_kwargs):
+        # theta/gamma/kappa are consumed by the simulator (D_threshold compute)
+        # but kept on the aggregator so a single config block drives everything.
+        self.theta = theta
+        self.gamma = gamma
+        self.kappa = kappa
+        self.alpha_T = alpha_T
+        self.T_min = T_min
+        self.beta_soft = beta_soft
+        self.beta_m = beta_m
+        self.eta_global = eta_global
 
-    # -- Step 6: Z-Score --
+    def aggregate(self, own_update: torch.Tensor, own_params: torch.Tensor,
+                  neighbor_updates: Dict[int, torch.Tensor],
+                  W_old: Optional[torch.Tensor] = None,
+                  V_agg_prev: Optional[torch.Tensor] = None,
+                  D_threshold: float = 1.0,
+                  trust_scores: Optional[Dict[int, float]] = None,
+                  D_total: int = 0) -> AggregationResult:
+        """Run trust update + softmax aggregation + momentum step.
 
-    @staticmethod
-    def _compute_zscore(gradient: torch.Tensor) -> float:
-        """Z(S_j) = |mean(S_j)| — detects magnitude anomaly."""
-        return abs(gradient.mean().item())
-
-    def _compute_z_threshold(self, z_score_buffer: deque) -> float:
-        """MAD-based robust threshold from temporal Z-score buffer."""
-        if len(z_score_buffer) < 2:
-            return float('inf')  # Don't filter early rounds
-        values = torch.tensor(list(z_score_buffer))
-        med = values.median()
-        mad = max((values - med).abs().median().item(), self.sigma_floor_z)
-        return med.item() + self.gamma_z * mad
-
-    # -- Step 7: Cosine + Harmonic --
-
-    @staticmethod
-    def _compute_similarity(own_update: torch.Tensor,
-                            neighbor_update: torch.Tensor) -> float:
-        """Cosine similarity normalized to [0, 1]."""
-        cos = F.cosine_similarity(
-            own_update.unsqueeze(0), neighbor_update.unsqueeze(0),
-        )
-        return 0.5 * (cos.item() + 1.0)
-
-    @staticmethod
-    def _behavior_score(p_safe: float, p_sim: float) -> float:
-        """Harmonic mean — both P_safe and P_sim must be high."""
-        return 2.0 * p_safe * p_sim / (p_safe + p_sim + 1e-12)
-
-    # -- Step 8: EMA trust update --
-
-    def _update_trust(self, current: float, behavior: float) -> float:
-        return self.ema_lambda * current + (1.0 - self.ema_lambda) * behavior
-
-    # -- Step 9: Dynamic tau_drop --
-
-    def _compute_drop_threshold(self, trust_buffer: deque) -> float:
-        """MAD-based robust threshold for trust filtering."""
-        if len(trust_buffer) < 2:
-            return 0.0  # Don't filter early rounds
-        values = torch.tensor(list(trust_buffer))
-        med = values.median()
-        mad = max((values - med).abs().median().item(), self.sigma_floor_drop)
-        return med.item() - self.alpha_drop * mad
-
-    # -- Main aggregate (Steps 6-11) --
-
-    def aggregate(self, own_update, own_params, neighbor_updates,
-                  node_trust_scores=None, z_score_buffer=None,
-                  trust_buffer=None):
+        own_update     : ΔW'_i (clipped, NO noise) — flat tensor.
+        own_params     : current W_trained (post-train) — used as fallback if
+                         W_old is not provided (W_old = own_params - own_update).
+        neighbor_updates: {j -> S_j} flat noisy packets from active neighbors.
+        W_old          : start-of-round weights; required for the global step.
+        V_agg_prev     : node's persistent momentum buffer; None ⇒ zeros.
+        D_threshold    : precomputed RMS-distance threshold (Step 5).
+        trust_scores   : node's persistent T_{i,·} dict; mutated in place.
+        D_total        : total parameter count (for RMS scaling of distance).
         """
-        Full D2B-DP pipeline. Extended signature with trust context.
-        Falls back to simple mean if no trust context (ABC compat).
-        """
-        # Fallback: no trust context -> own update already in own_params, add neighbor mean
-        if node_trust_scores is None:
-            stack = torch.stack(list(neighbor_updates.values()))
-            return AggregationResult(
-                new_params=own_params + stack.mean(0),
-                clean_ids=list(neighbor_updates.keys()), flagged_ids=[])
+        if W_old is None:
+            W_old = own_params - own_update
+        if trust_scores is None:
+            trust_scores = {}
 
-        # Phase 3: Inbound evaluation
-        z_threshold = self._compute_z_threshold(z_score_buffer)
-        z_values = []
-        per_neighbor = {}
+        sqrt_D = math.sqrt(max(D_total, 1))
+        per_neighbor: Dict[int, dict] = {}
+        n_total = len(neighbor_updates)
+        clean_ids: list = []
+        flagged_ids: list = []
 
-        for j, s_j in neighbor_updates.items():
-            z_j = self._compute_zscore(s_j)
-            z_values.append(z_j)
-            p_safe = max(0.0, 1.0 - z_j / (z_threshold + 1e-12))
-            p_sim = self._compute_similarity(own_update, s_j)
-            r_ij = self._behavior_score(p_safe, p_sim)
-            node_trust_scores[j] = self._update_trust(node_trust_scores[j], r_ij)
-            per_neighbor[j] = {"z": z_j, "p_safe": p_safe, "p_sim": p_sim,
-                               "behavior": r_ij, "trust": node_trust_scores[j]}
+        if n_total == 0:
+            S_agg = torch.zeros_like(own_update)
+        else:
+            # Step 4-6: distance, cosine, trust EMA per neighbor
+            for j, s_j in neighbor_updates.items():
+                d_ij = (own_update - s_j).norm(2).item() / sqrt_D
+                cos_ij = F.cosine_similarity(
+                    own_update.unsqueeze(0), s_j.unsqueeze(0)).item()
+                p_dist = math.exp(-d_ij / max(D_threshold, 1e-12))
+                p_cos = max(0.0, cos_ij)
+                q_ij = p_dist * p_cos
+                prev_t = trust_scores.get(j, 1.0)
+                t_ij = self.alpha_T * prev_t + (1.0 - self.alpha_T) * q_ij
+                trust_scores[j] = t_ij
+                per_neighbor[j] = {
+                    "d_rms": d_ij, "cos": cos_ij, "p_dist": p_dist,
+                    "p_cos": p_cos, "q": q_ij, "trust": t_ij,
+                }
 
-        z_score_buffer.extend(z_values)
-
-        # Phase 4: Trust buffer -> MAD filtering -> penalty
-        trust_buffer.extend(node_trust_scores.values())
-        tau_drop = self._compute_drop_threshold(trust_buffer)
-
-        clean_ids, flagged_ids = [], []
-        for j in neighbor_updates:
-            if node_trust_scores[j] < tau_drop:
-                flagged_ids.append(j)
-                node_trust_scores[j] *= self.gamma_penalty  # Step 10: Penalty
+            # Step 7: safe set V + softmax weights
+            safe_ids = [j for j in neighbor_updates
+                        if trust_scores.get(j, 0.0) >= self.T_min]
+            if safe_ids:
+                logits = torch.tensor(
+                    [self.beta_soft * trust_scores[j] for j in safe_ids],
+                    dtype=own_update.dtype)
+                weights = F.softmax(logits, dim=0).tolist()
+                S_agg = torch.zeros_like(own_update)
+                for w, j in zip(weights, safe_ids):
+                    S_agg = S_agg + w * neighbor_updates[j]
+                    per_neighbor[j]["softmax_w"] = w
+                clean_ids = list(safe_ids)
+                flagged_ids = [j for j in neighbor_updates if j not in safe_ids]
             else:
-                clean_ids.append(j)
+                S_agg = torch.zeros_like(own_update)
+                flagged_ids = list(neighbor_updates.keys())
 
-        # Step 11: Aggregate from clean set only
-        # own_params already contains own_update (post-training), add clean neighbor mean
-        new_params = own_params
-        if clean_ids:
-            new_params = new_params + torch.stack(
-                [neighbor_updates[j] for j in clean_ids]).mean(0)
+        # Momentum buffer + global step
+        if V_agg_prev is None:
+            V_agg_prev = torch.zeros_like(own_update)
+        V_agg = self.beta_m * V_agg_prev + (1.0 - self.beta_m) * S_agg
+        new_params = W_old + self.eta_global * V_agg
 
-        mean_trust = sum(node_trust_scores.values()) / max(len(node_trust_scores), 1)
         return AggregationResult(
             new_params=new_params,
             clean_ids=clean_ids,
             flagged_ids=flagged_ids,
-            metrics={"z_threshold": z_threshold, "tau_drop": tau_drop,
-                     "neighbor_detail": per_neighbor},
-            node_metrics={"mean_trust": mean_trust, "tau_drop": tau_drop,
-                          "n_rejected": float(len(flagged_ids))},
+            metrics={
+                "D_threshold": D_threshold,
+                "n_safe": len(clean_ids),
+                "n_total": n_total,
+                "neighbor_detail": per_neighbor,
+                "V_agg": V_agg,
+            },
+            node_metrics={
+                "D_threshold": float(D_threshold),
+                "n_rejected": float(n_total - len(clean_ids)),
+                "V_agg_norm": float(V_agg.norm().item()),
+                "S_agg_norm": float(S_agg.norm().item()),
+            },
         )

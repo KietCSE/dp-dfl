@@ -1,0 +1,50 @@
+[
+    {
+        "algorithm": "dp-fedavg",
+        "epsilon": 85.01,
+        "accuracy": 0.5744,
+        "f1_score": 0.0
+    },
+    {
+        "algorithm": "dpsgd-kurtosis",
+        "epsilon": 9.11,
+        "accuracy": 0.5759,
+        "f1_score": 0.8203
+    },
+    {
+        "algorithm": "fedavg",
+        "epsilon": 0.0,
+        "accuracy": 0.7006,
+        "f1_score": 0.0
+    },
+    {
+        "algorithm": "fltrust",
+        "epsilon": 0.0,
+        "accuracy": 0.6587,
+        "f1_score": 0.5054
+    },
+    {
+        "algorithm": "krum",
+        "epsilon": 0.0,
+        "accuracy": 0.6660,
+        "f1_score": 0.6041
+    },
+    {
+        "algorithm": "noise-game",
+        "epsilon": 52.94,
+        "accuracy": 0.6300,
+        "f1_score": 0.5982
+    },
+    {
+        "algorithm": "trimmed-mean",
+        "epsilon": 0.0,
+        "accuracy": 0.6848,
+        "f1_score": 0.5096
+    },
+    {
+        "algorithm": "trust-aware",
+        "epsilon": "infinity",
+        "accuracy": 0.6871,
+        "f1_score": 0.6087
+    }
+]

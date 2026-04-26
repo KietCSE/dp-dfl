@@ -3,3 +3,4 @@ pyyaml>=6.0
 matplotlib>=3.7
 numpy>=1.24
 torchvision
+opacus==1.4.0

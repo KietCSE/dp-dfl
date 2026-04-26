@@ -1,0 +1,58 @@
+
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    alpha: 1.0
+    samples_per_node: 1000
+
+model:
+  name: mlp
+  hidden_size: 32              # D ≈ 25,460
+
+topology:
+  n_nodes: 60
+  n_attackers: 0               # 20% attackers
+  n_neighbors: 40
+  seed: 42
+
+training:
+  n_rounds: 20                 # enough rounds past warmup (T_w=5)
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: none             # adaptive_noise simulator does its own clip+noise
+  clip_bound: 2.0
+  delta: 1.0e-5
+  epsilon_max: 100000.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
+  sampling_rate: 1.0           # keep all nodes active so L1 has enough signal
+
+attack:
+  type: label_flip
+  flip_mode: rotate            # rotate labels -> persistent direction bias
+  start_round: 10
+
+aggregation:
+  type: momentum_kurtosis_avg
+  params:
+    beta_m: 0.95              # tang smoothing: Var[noise_EMA] giam tu 5% -> 2.5% goc
+    gamma_mad: 4.0            # chat hon: chi flag khi cos < median - 4*MAD
+    warmup_rounds: 10         # >= EMA window 1/(1-beta_m)=20, buffer 5 rounds
+    kurtosis_confidence: 1.96
+    kurtosis_centered: false
+
+adaptive_noise:
+  sigma_0: 1.1
+  sigma_min: 0.5
+  gamma: 0.9
+  beta_min: 0.90
+  epsilon_num: 1.0e-8
+
+output_dir: ./results
+seed: 42

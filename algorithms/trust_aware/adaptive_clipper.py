@@ -1,26 +1,42 @@
-"""Adaptive L2-norm clipper with FIFO history for dynamic threshold."""
+"""Layer-wise adaptive L2-norm clipper for Trust-Aware D2B-DP.
+
+Implements Step 2 of docs/Trust-Aware-D2B-DP.md:
+    Clip_l = (1/k) · Σ H_l[m]            (mean of last-k L2 norms per layer)
+    ΔW'_l = ΔW_l / max(1, ||ΔW_l||_2 / Clip_l)
+
+State (per-layer FIFO deques) lives on TrustAwareNode; this class is stateless.
+"""
+
+from collections import deque
+from typing import List, Optional, Sequence
 
 import torch
-from collections import deque
-from typing import Optional
 
 
-class AdaptiveClipper:
-    """Stateless clipper — state (clip_history deque) lives in TrustAwareNode."""
+class LayerwiseAdaptiveClipper:
+    """Per-layer L2-norm clipping with FIFO history for dynamic threshold."""
 
-    def __init__(self, clip_window: int = 3):
-        self.clip_window = clip_window
+    def __init__(self, k: int = 5):
+        self.k = k
 
     @staticmethod
-    def get_threshold(history: deque) -> Optional[float]:
-        """Mean of raw L2 norms in history. None if empty (cold start)."""
-        if not history:
-            return None
-        return sum(history) / len(history)
+    def get_thresholds(history: Sequence[deque]) -> List[Optional[float]]:
+        """Return per-layer Clip_l = mean(H_l). None when no history yet."""
+        out: List[Optional[float]] = []
+        for h in history:
+            out.append(sum(h) / len(h) if h else None)
+        return out
 
     @staticmethod
-    def clip(gradient: torch.Tensor, threshold: float) -> torch.Tensor:
-        """L2-norm clip: g' = g * min(1, threshold / ||g||_2)."""
-        norm = gradient.norm(2)
-        factor = min(1.0, threshold / (norm.item() + 1e-12))
-        return gradient * factor
+    def clip(layers: Sequence[torch.Tensor],
+             thresholds: Sequence[Optional[float]]) -> List[torch.Tensor]:
+        """Clip each layer to its per-layer threshold; pass through if None."""
+        clipped: List[torch.Tensor] = []
+        for layer, thr in zip(layers, thresholds):
+            if thr is None:
+                clipped.append(layer.clone())
+                continue
+            norm = layer.norm(2).item()
+            factor = min(1.0, thr / (norm + 1e-12))
+            clipped.append(layer * factor)
+        return clipped
