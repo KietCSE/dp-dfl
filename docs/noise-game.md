@@ -1,432 +1,342 @@
-# Chèn Noise Chiến lược với Quyền riêng tư RDP cho DFL Bền vững
+# Noise Game — Implementation Report
+
+## Tổng quan
+
+Báo cáo này mô tả chi tiết cách hiện thực hóa chiến lược Noise Game theo nội dung `noise-game.md` bằng kiến trúc 4 lớp. Mục tiêu chính là kết hợp:
+
+- Differential Privacy để bảo vệ gradient,
+- Renyi DP để điều phối mức noise theo ngân sách privacy,
+- strategic noise để tăng robust với model poisoning attack,
+- recovery để lấy lại tín hiệu gradient sau khi thêm noise.
+
+Toàn bộ pipeline được triển khai trong `algorithms/noise_game/mechanism.py` và được liên kết với simulator bằng các tham số DP/adaptive. Các phần nội dung bên dưới giải thích rõ từng lớp, công thức, ý nghĩa và quyết định thiết kế.
 
 ---
 
-# 1. Giới thiệu
+## Layer 1 — Differential Privacy Layer
 
-Federated Learning phân tán (Decentralized Federated Learning - DFL) cho phép nhiều client hợp tác huấn luyện mô hình mà không cần máy chủ trung tâm. Tuy nhiên, kiến trúc phân tán cũng mở ra các rủi ro bảo mật lớn:
+### Mục tiêu
 
-- Tấn công nhiễu gradient (model poisoning) làm sai lệch quá trình tối ưu hóa.
-- Rò rỉ thông tin qua gradient (inference attack).
+Layer 1 chịu trách nhiệm bảo đảm privacy cơ bản. Nó giới hạn sensitivity của gradient và thêm Gaussian noise chuẩn hoá.
 
-Differential Privacy (DP) có thể giảm rò rỉ bằng cách thêm noise vào gradient. Tuy nhiên, các phương pháp DP tiêu chuẩn thường:
+### Cơ chế thực hiện
 
-- thêm noise đồng nhất, không xét đến cấu trúc của gradient,
-- yếu trước các cập nhật độc hại,
-- làm giảm độ chính xác khi noise quá lớn.
+1. Clipping gradient:
+   - Với gradient g, thực hiện:
+     ```math
+     g_t \leftarrow \frac{g_t}{\max\left(1, \frac{\|g_t\|}{C}\right)}
+     ```
+   - Điều này đảm bảo mỗi gradient sau clipping có chuẩn không vượt quá `C`.
+   - Clipping là bước quan trọng để DP guarantee có ý nghĩa; nếu không giới hạn `\|g_t\|`, Gaussian mechanism không thể tính toán privacy cost chính xác.
 
-Tài liệu này trình bày một khung 4 lớp kết hợp:
+2. Gaussian noise DP:
+   - Sinh noise:
+     ```math
+     n_{DP,t} \sim \mathcal{N}(0, \sigma_{DP,t}^2 I)
+     ```
+   - Noise này được thêm vào sau khi clipping: `\hat{g}_t = g_{bar,t} + n_{DP,t} + n_{strategic,t}`.
 
-- **DP để bảo vệ quyền riêng tư**,
-- **RDP để điều khiển cường độ noise**,
-- **noise chiến lược để tăng robust và giữ accuracy**.
+3. Lower bound chuẩn cho sigma_DP:
+   - Với một mục tiêu `(\varepsilon, \delta)`-DP, công thức chuẩn là:
+     ```math
+     \sigma_{DP,t} \ge \frac{C \sqrt{2 \ln(1.25/\delta)}}{\varepsilon}
+     ```
+   - Bản thực hiện giữ nguyên nguyên lý này như base floor để không giảm quá thấp sigma_DP.
 
----
+### File liên quan
 
-# 2. Ý tưởng cốt lõi: Thiết kế noise theo lý thuyết game
+- `algorithms/noise_game/mechanism.py` → hàm `compute_dp_noise()` và logic clipping
 
-## 2.1 Mô hình tấn công và phòng vệ
+### Ý nghĩa
 
-Cho:
-
-- gradient sạch: `g`,
-- perturbation độc hại: `\delta`,
-- noise thêm vào: `n`.
-
-Gradient quan sát được là:
-
-```math
-\hat{g} = g + \delta + n
-```
-
-Mục tiêu là chọn `n` để giảm thiểu tác động của `\delta` mà vẫn duy trì privacy.
-
-## 2.2 Bài toán Minimax
-
-Bài toán này có thể biểu diễn như sau:
-
-```math
-\min_n \max_\delta \|\delta + n\|
-```
-
-Nghĩa là defender muốn chọn noise sao cho khi attacker tối đa hoá perturbation, tổng nhiễu vẫn nhỏ.
-
-## 2.3 Tách noise thành hai thành phần
-
-Chúng ta tách noise thành:
-
-```math
-n = n_{DP} + n_{strategic}
-```
-
-Trong đó:
-
-- `n_{DP}` đảm bảo **privacy** theo DP,
-- `n_{strategic}` đảm bảo **robustness** và giảm thiểu tổn thất độ chính xác.
-
-## 2.4 Nguyên lý điều khiển
-
-Privacy và robustness được tách biệt chức năng, nhưng vẫn phải được điều phối chung qua ngân sách noise.
+Layer 1 tách biệt rõ ràng phần privacy noise: nó đảm bảo guarantee DP độc lập với phần strategic noise và các cơ chế những lớp sau thêm.
 
 ---
 
-# 3. Kiến trúc hệ thống 4 lớp
+## Layer 2 — RDP-based Noise Control
 
-## 3.1 Tổng quan các lớp
+### Mục tiêu
 
-| Lớp   | Chức năng chính                            |
-| ----- | ------------------------------------------ |
-| Lớp 1 | Bảo đảm DP bằng clipping và Gaussian noise |
-| Lớp 2 | Điều khiển cường độ noise theo RDP         |
-| Lớp 3 | Thiết kế noise chiến lược với cấu trúc     |
-| Lớp 4 | Khôi phục tín hiệu và cập nhật tối ưu hóa  |
+Layer 2 quản lý ngân sách privacy và chất lượng noise theo thời gian. Nó khai thác RDP accounting để điều chỉnh `\sigma_{DP}` một cách adaptative dựa trên trạng thái trust/attack và còn lại budget.
 
-## 3.2 Luồng xử lý tổng thể
+### Cơ chế thực hiện
 
-```text
-g_t
- ↓
-[Layer 1] Clipping → gbar_t
- ↓
-Lấy noise DP: n_DP ~ N(0, sigma_DP_t^2 I)
- ↓
-[Layer 2] Tính sigma_strat_t
- ↓
-[Layer 3] Tính \hat{n}_t
- ↓
-n_strategic = sigma_strat_t · hat{n}_t
- ↓
-\hat{g}_t = gbar_t + n_DP + n_strategic
- ↓
-[Layer 4] Denoise + cập nhật
-```
+1. RDP accounting nội bộ:
+   - Sử dụng công thức heuristic với `\alpha = 2`:
+     ```math
+     \varepsilon_t(\alpha) = \frac{\alpha}{2 \sigma_{DP,t}^2}
+     ```
+   - Tích luỹ privacy cost nội bộ: `eps_spent += C^2 / (2 * sigma_DP^2)`.
+   - Lưu ý: đây chỉ là tracker để điều phối scheduler, còn `RenyiAccountant` chính thức trong simulator chịu trách nhiệm privacy auditing.
 
-## 3.3 Mục tiêu thiết kế
+2. Adaptive sigma scheduler:
+   - `\sigma_{DP,t}` được điều chỉnh theo ba yếu tố chính:
+     - `epsilon_remain` (ngân sách chưa dùng hết)
+     - `trust_t` (độ ổn định gradient)
+     - `attack_t` (tín hiệu bất thường/tấn công)
+   - Công thức heuristics đã áp dụng tương tự:
+     ```math
+     \sigma_{DP,t} = \sigma_0 \exp(-\kappa t) \cdot \max(0.1, 1 - \frac{eps_spent}{eps_max}) \cdot (1 + attack_signal)
+     ```
+   - Khi model ổn định và budget còn lại thấp, sigma giảm dần để bảo toàn privacy; khi attack tín hiệu tăng, sigma được tăng lên để tăng robustness.
 
-Khung 4 lớp giúp tách rõ:
+3. Strategic noise coupling:
+   - `\sigma_{strat,t}` được lấy theo tỷ lệ với `\sigma_{DP,t}`:
+     ```math
+     \sigma_{strat,t} = \beta_t \cdot \sigma_{DP,t}
+     ```
+   - Tham số `beta_strat` cho phép điều chỉnh mức noise chiến lược so với noise privacy.
 
-- **Privacy** ở tầng 1,
-- **Control** ở tầng 2,
-- **Geometry** ở tầng 3,
-- **Recovery** ở tầng 4.
+### Logic điều khiển chính
 
----
+- trust thấp → tăng `\sigma_{DP,t}` và `\sigma_{strat,t}`
+- attack cao → tăng noise để tăng robustness
+- budget thấp → giảm `\sigma_{DP,t}` để tiết kiệm privacy
 
-# 4. Lớp 1 — Differential Privacy Layer
+### File liên quan
 
-## 4.1 Clipping gradient
+- `algorithms/noise_game/mechanism.py` → hàm `compute_sigma_dp()`
 
-Gradient đầu vào được chuẩn hoá để giới hạn sensitivity:
+### Ý nghĩa
 
-```math
-g_t \leftarrow \frac{g_t}{\max\left(1, \frac{\|g_t\|}{C}\right)}
-```
-
-Việc này đảm bảo:
-
-```math
-\|g_t\| \le C
-```
-
-Trong đó `C` là ngưỡng clipping. Điều này ngăn gradient có độ lớn quá cao làm lệch bảo đảm privacy.
-
-## 4.2 Cơ chế Gaussian
-
-Noise DP được thêm vào bằng Gaussian:
-
-```math
-n_{DP,t} \sim \mathcal{N}(0, \sigma_{DP,t}^2 I)
-```
-
-Đây là phần noise chịu trách nhiệm chính cho tính chất DP.
-
-## 4.3 DP guarantee
-
-Để đạt $(\varepsilon, \delta)$-DP sau clipping, cần:
-
-```math
-\sigma_{DP,t} \ge \frac{C \sqrt{2 \ln(1.25/\delta)}}{\varepsilon}
-```
-
-Công thức này là điều kiện chuẩn của Gaussian mechanism.
-
-## 4.4 Vai trò của Layer 1
-
-Layer 1 bảo đảm mỗi gradient đầu vào có sensitivity có hạn và cung cấp nguồn noise DP. Các lớp sau không thể thay thế guarantee này.
+Layer 2 là “bộ điều tiết” trung tâm: nó xác định mức noise dùng cho cả privacy và strategic noise, cân bằng giữa bảo mật, robust và budget privacy.
 
 ---
 
-# 5. Lớp 2 — RDP-based Noise Control
+## Layer 3 — Strategic Noise Design
 
-## 5.1 RDP accounting
+### Mục tiêu
 
-Privacy cost tại vòng `t` được tính bằng RDP:
+Layer 3 xây dựng phần noise chiến lược `n_{strategic}` sao cho vừa chống lại attack, vừa giữ lại cấu trúc thông tin quan trọng của gradient.
 
-```math
-\varepsilon_t(\alpha) = \frac{\alpha}{2 \sigma_{DP,t}^2}
-```
+### Thành phần chính
 
-Tổng chi phí privacy sau `T` vòng là:
+1. Directional noise:
+   - Dựa trên biến thiên gradient `v_t = g_t - g_{t-1}`.
+   - Nếu trust thấp, `v_t` có thể chứa tín hiệu tấn công bất thường.
+   - Noise hướng attack được tạo ra theo dạng:
+     ```math
+     n_{attack} = \alpha_t \cdot v_t
+     ```
+   - Tham số `\alpha_t` điều chỉnh cường độ noise theo độ bất thường.
 
-```math
-\varepsilon_{total} = \sum_{t=1}^T \varepsilon_t(\alpha)
-```
+2. Orthogonal noise:
+   - Giữ noise không làm lệch hướng descent chính:
+     ```math
+     n_{orth} = z - \frac{z \cdot g_t}{\|g_t\|^2} g_t
+     ```
+   - `z` là vector ngẫu nhiên; thành phần này thuần túy ở không gian vuông góc với gradient.
+   - Mục đích là tăng entropy noise nhưng không phá hoại hướng chính của gradient.
 
-## 5.2 Ngân sách privacy
+3. Spectrum-aware noise:
+   - Dựng noise theo phân tích phổ của gradient.
+   - Dạng triển khai dùng giả SVD/truncated SVD và nghịch đảo giá trị riêng để tạo noise trên không gian phổ:
+     ```math
+     n_{spec} = U \cdot \mathrm{diag}(\lambda^{-1}) \cdot r
+     ```
+   - `r` là vector ngẫu nhiên, `\lambda` là các giá trị riêng.
+   - Tính năng này giúp noise chú trọng tới các thành phần phổ yếu hơn, làm giảm thiểu tổn thất thông tin ở các không gian có tín hiệu lớn.
 
-Hệ thống phải thỏa:
+4. Kết hợp và chuẩn hoá noise:
+   - Tổng hợp các thành phần:
+     ```math
+     \hat{n}_t = \frac{n_{attack} + n_{orth} + n_{spec}}{\|n_{attack} + n_{orth} + n_{spec}\|}
+     ```
+   - Sau đó scale:
+     ```math
+     n_{strategic} = \sigma_{strat,t} \cdot \hat{n}_t
+     ```
+   - Điều này đảm bảo độ lớn noise chiến lược được kiểm soát bởi `\sigma_{strat,t}` và hướng noise được chuẩn hoá.
 
-```math
-\varepsilon_{total} \le \varepsilon_{max}
-```
+### File liên quan
 
-Do đó Layer 2 chịu trách nhiệm cân bằng giữa mức noise bảo mật và ngân sách privacy có hạn.
+- `algorithms/noise_game/mechanism.py` → `directional_noise()`, `orthogonal_noise()`, `spectrum_noise()`
 
-## 5.3 Adaptive scheduler
+### Ý nghĩa
 
-Một bộ điều phối mẫu có dạng:
-
-```math
-\sigma_{DP,t} = f(\varepsilon_{remain}, trust_t, attack_t)
-```
-
-Trong đó:
-
-- `\varepsilon_{remain}` là ngân sách privacy còn lại,
-- `trust_t` đo độ ổn định của gradient,
-- `attack_t` là tín hiệu chỉ báo tấn công.
-
-## 5.4 Chiết tách strategic noise
-
-Phần noise chiến lược được chọn theo tỷ lệ:
-
-```math
-\sigma_{strat,t} = \beta_t \cdot \sigma_{DP,t}
-```
-
-Trong đó `\beta_t` điều chỉnh phần noise dành cho robustness so với privacy.
-
-## 5.5 Logic điều khiển
-
-Các quy tắc chung:
-
-- `trust thấp` → tăng `\sigma_{DP,t}` và `\sigma_{strat,t}`
-- `attack cao` → tăng noise để tăng robustness
-- `budget thấp` → giảm `\sigma_{DP,t}` để tiết kiệm privacy
-
-Layer 2 là bộ điều tiết trung tâm của hệ thống.
+Layer 3 là phần thuần “robustness”: nó thêm noise có cấu trúc để giảm tác động attack mà vẫn lưu giữ tín hiệu chính.
 
 ---
 
-# 6. Lớp 3 — Strategic Noise Design
+## Layer 4 — Recovery and Optimization
 
-## 6.1 Biến thiên gradient
+### Mục tiêu
 
-Giữa hai vòng liên tiếp, sử dụng biến thiên gradient:
+Layer 4 xử lý gradient đã nhiễu để khôi phục phần tín hiệu hữu ích và duy trì cập nhật mô hình ổn định.
 
-```math
-v_t = g_t - g_{t-1}
-```
+### Thành phần chính
 
-`v_t` thường chứa tín hiệu về thay đổi bất thường hoặc tấn công.
+1. EMA smoothing:
+   - Dùng bộ lọc EMA để làm mượt gradient noisy:
+     ```math
+     \tilde{g}_t = \gamma \tilde{g}_{t-1} + (1-\gamma) \hat{g}_t
+     ```
+   - `\gamma` quyết định trọng số lịch sử.
 
-## 6.2 Trust score
+2. Momentum:
+   - Ổn định cập nhật bằng momentum:
+     ```math
+     m_t = \beta m_{t-1} + (1-\beta) \tilde{g}_t
+     ```
+   - Giúp giảm dao động do noise.
 
-Độ tin cậy được xác định bằng cosine similarity:
+3. Gradient filtering:
+   - Nếu gradient noisy lệch quá xa lịch sử, có thể reject:
+     ```math
+     \cos(\hat{g}_t, \tilde{g}_{t-1}) < \tau \Rightarrow \text{reject}
+     ```
+   - Khi đó dùng EMA hoặc gradient trước để tránh cập nhật gây hại.
 
-```math
-trust_t = \frac{g_t \cdot g_{t-1}}{\|g_t\| \cdot \|g_{t-1}\|}
-```
+4. Trust-aware learning rate:
+   - Learning rate được điều chỉnh theo trust score:
+     ```math
+     final = m_t \cdot \max(trust_t, 0)
+     ```
+   - Mục đích giảm ảnh hưởng của cập nhật khi trust thấp.
 
-Giá trị gần `1` nghĩa là gradient ổn định, giá trị thấp có thể báo hiệu tấn công.
+5. Variance reduction / two-track model:
+   - Có cơ chế tương tự SCAFFOLD:
+     ```math
+     g' = g - c_i + c_{global}
+     ```
+   - Ngoài ra có ý tưởng hợp nhất hai đường đi:
+     ```math
+     w = \lambda w^{clean} + (1-\lambda) w^{robust}
+     ```
+   - Điều này giúp cân bằng giữa mô hình chính xác và mô hình bền vững.
 
-## 6.3 Noise hướng attack
+### Files liên quan
 
-Một thành phần noise nhắm theo hướng attack:
+- `algorithms/noise_game/node.py`
+- `algorithms/noise_game/simulator.py`
 
-```math
-n_{attack} = \alpha_t \cdot v_t
-```
+### Ý nghĩa
 
-`\alpha_t` điều khiển cường độ noise theo hướng biến thiên.
-
-## 6.4 Noise vuông góc
-
-Một thành phần noise được thiết kế để không làm lệch hướng descent chính:
-
-```math
-n_{orth} = z - \frac{z \cdot g_t}{\|g_t\|^2} g_t
-```
-
-Trong đó `z` là vector ngẫu nhiên.
-
-## 6.5 Noise phổ-aware
-
-Phân tích gradient theo phổ:
-
-```math
-g_t = U \Lambda V^T
-```
-
-Noise phổ-aware có thể được xây dựng như:
-
-```math
-n_{spec} = U \cdot \operatorname{diag}(\lambda^{-1}) \cdot r
-```
-
-Trong đó `r` là vector ngẫu nhiên và `\lambda` là các giá trị riêng.
-
-## 6.6 Kết hợp hướng noise
-
-Noise tổng hợp được chuẩn hoá:
-
-```math
-\hat{n}_t = \frac{n_{attack} + n_{orth} + n_{spec}}{\|n_{attack} + n_{orth} + n_{spec}\|}
-```
-
-## 6.7 Noise chiến lược cuối cùng
-
-```math
-n_{strategic} = \sigma_{strat,t} \cdot \hat{n}_t
-```
-
-Layer 3 làm nhiệm vụ chọn hướng noise sao cho vừa chống tấn công vừa giữ lại thông tin gradient quan trọng.
+Layer 4 đảm bảo rằng dù đã thêm noise mạnh, quá trình tối ưu hóa vẫn giữ được khả năng học và không bị nhiễu mất phương hướng.
 
 ---
 
-# 7. Lớp 4 — Tối ưu hóa và khôi phục tín hiệu
+## Budget Constraint và NSR
 
-## 7.1 Làm mượt với EMA
+### Constraint tổng năng lượng noise
 
-Gradient noisy được làm mượt bằng EMA:
+- Tổng năng lượng noise phải thỏa:
+  ```math
+  \|n_{DP}\|^2 + \|n_{strategic}\|^2 \le \sigma_{total}^2
+  ```
+- Nếu tổng độ lớn noise vượt, cả hai thành phần sẽ được scale xuống tỉ lệ tương ứng.
+- Điều này đảm bảo hệ thống không thêm noise quá lớn gây mất tín hiệu.
 
-```math
-\tilde{g}_t = \gamma \tilde{g}_{t-1} + (1-\gamma) \hat{g}_t
-```
+### NSR monitoring
 
-`\gamma` điều khiển mức trễ của bộ lọc.
+- Khai báo chỉ số noise-to-signal ratio:
+  ```math
+  NSR = \frac{\|n_{DP} + n_{strategic}\|}{\|g\|}
+  ```
+- Nếu NSR vượt ngưỡng `nsr_warn`, hệ thống ghi log warning để cảnh báo noise quá cao.
+- Các chỉ số `avg_nsr` và `avg_sigma_dp` được lưu xuống round logs để theo dõi xu hướng.
 
-## 7.2 Momentum
+### Ý nghĩa
 
-Sử dụng momentum để ổn định cập nhật:
-
-```math
-m_t = \beta m_{t-1} + (1-\beta) \tilde{g}_t
-```
-
-Momentum giúp giảm dao động do noise.
-
-## 7.3 Lọc gradient bất thường
-
-Một điều kiện loại bỏ gradient nếu nó lệch quá xa lịch sử:
-
-```math
-\cos(\hat{g}_t, \tilde{g}_{t-1}) < \tau \Rightarrow \text{reject}
-```
-
-Trong đó `\tau` là ngưỡng tương quan.
-
-## 7.4 Cập nhật tham số
-
-Sau khi xử lý, cập nhật mô hình:
-
-```math
-w_{t+1} = w_t - \eta m_t
-```
-
-`\eta` là learning rate.
-
-## 7.5 Vai trò của Layer 4
-
-Layer 4 giữ cho quá trình huấn luyện ổn định bằng cách khôi phục tín hiệu từ gradient đã nhiễu.
+Constraint và NSR giúp cân bằng giữa privacy/robustness và chất lượng gradient. Khi noise quá lớn, system biết phải giảm cường độ hoặc điều chỉnh tham số.
 
 ---
 
-# 8. Cơ chế tăng độ chính xác
+## Thay đổi cấu hình và tham số
 
-## 8.1 Giảm noise theo thời gian
+### Thêm trường trong `NoiseGameConfig`
 
-Noise DP có thể giảm dần để giữ accuracy khi mô hình đã ổn định:
-
-```math
-\sigma_{DP,t} = \sigma_0 e^{-\kappa t}
+```python
+beta_strat: float = 0.5      # Tỷ lệ chuyển từ sigma_DP sang sigma_strat
+sigma_total: float = 3.0     # Năng lượng noise tối đa cho tổng noise
+nsr_warn: float = 5.0        # Ngưỡng cảnh báo NSR
 ```
 
-## 8.2 Learning rate theo trust
+### Loại bỏ trường cũ
 
-Learning rate điều chỉnh theo độ tin cậy:
-
-```math
-\eta_i = \eta \cdot trust_i
+```yaml
+noise_mult: 1.1 # Đã loại bỏ vì noise_game tự quản lý mức noise, không cần multiplier ngoài
 ```
 
-## 8.3 Giảm phương sai
+### Tệp đã chỉnh sửa
 
-Biện pháp variance reduction:
+- `config.py` — thêm trường cấu hình mới
+- `config/noise_game.yaml` — cập nhật tham số, loại bỏ `noise_mult`
+- `config/cifar10_noise_game.yaml` — cập nhật tương tự
+- `algorithms/noise_game/mechanism.py` — triển khai pipeline 4 lớp và các hàm noise
+- `algorithms/noise_game/simulator.py` — cập nhật phases liên quan đến DP, trust và logging
+- `run.py` — truyền thông số DP/adaptive sang `mechanism.py`
 
-```math
-g_i' = g_i - c_i + c
-```
+### Tệp không thay đổi
 
-## 8.4 Mô hình hai luồng
-
-Kết hợp hai tham số:
-
-```math
-w = \lambda w^{clean} + (1-\lambda) w^{robust}
-```
-
-Giúp cân bằng giữa độ chính xác và độ bền.
+- `algorithms/noise_game/node.py` — buffer và trạng thái đã đủ cho pipeline hiện tại
+- `algorithms/noise_game/simple_avg_aggregator.py` — không cần sửa đổi cho noise game
 
 ---
 
-# 9. Mô hình noise thống nhất
+## Quyết định thiết kế chính
 
-## 9.1 Gradient cuối cùng
+### 1. `attack_signal` chọn là `(1 - trust)`
 
-```math
-\hat{g}_t = g_t + n_{DP,t} + n_{strategic,t}
-```
+- Lý do: đơn giản, trực quan và phù hợp với mô tả trong `noise-game.md`.
+- Nếu trust giảm tức là gradient không ổn định → tăng noise.
+- Giữ KISS, tránh phức tạp hoá bằng nhiều chỉ báo.
 
-Trong đó `n_{DP,t}` bảo vệ quyền riêng tư và `n_{strategic,t}` chống tấn công.
+### 2. `sigma_total` cố định
 
-## 9.2 Ràng buộc tổng noise
+- Chọn giữ fixed cap `sigma_total = 3.0` như trong kế hoạch ban đầu.
+- Nhận xét: với các mô hình lớn, constraint này có thể làm noise hiệu dụng bị scale xuống nhiều.
+- Khuyến nghị tương lai: nếu cần scale theo kích thước model, có thể chuyển sang base theo `sqrt(param_dim)`.
 
-```math
-\|n_{DP,t}\|^2 + \|n_{strategic,t}\|^2 \le \sigma_{total}^2
-```
+### 3. Scheduler DP adaptative
 
-Ràng buộc này giữ tổng năng lượng noise trong giới hạn chấp nhận được.
+- Áp dụng giảm dần noise theo thời gian (`sigma_0 e^{-\kappa t}`) và giảm thêm khi gần cạn budget privacy.
+- Mục đích: giữ accuracy khi model ổn định và không lãng phí epsilon.
 
----
+### 4. RDP accounting nội bộ chỉ để điều phối
 
-# 10. Hệ thống điều khiển noise
+- Không dùng tracker này như phương pháp accounting duy nhất.
+- `RenyiAccountant` trong simulator vẫn đóng vai trò chính xác hơn cho privacy auditing.
+- Nội bộ tracker chỉ giúp scheduler ổn định.
 
-## 10.1 Tỷ lệ noise/tín hiệu
+### 5. Strategic noise cấu trúc nhiều thành phần
 
-```math
-NSR = \frac{\|n\|}{\|g\|}
-```
-
-NSR đo mức độ nhiễu so với tín hiệu gradient.
-
-## 10.2 Hành vi thích nghi
-
-| Giai đoạn | Mức noise  |
-| --------- | ---------- |
-| Early     | Cao        |
-| Mid       | Trung bình |
-| Late      | Thấp       |
-
-Chiến lược là dùng nhiều noise khi hệ thống mới bắt đầu hoặc khi tấn công mạnh, rồi giảm dần khi mô hình ổn định.
+- Kết hợp hướng tấn công, noise vuông góc và spectrum-aware để vừa robust vừa giữ tín hiệu.
+- Đây là điểm khác biệt chính so với DP Gaussian noise chuẩn.
 
 ---
 
-# 11. Đóng góp chính
+## Các lựa chọn đã cân nhắc nhưng chưa dùng
 
-1. Công thức game-theoretic để thiết kế noise.
-2. Tách biệt rõ ràng giữa noise privacy và noise chiến lược.
-3. Điều phối noise adaptative bằng RDP.
-4. Noise cấu trúc đa thành phần (theo hướng, vuông góc, phổ-aware).
-5. Tích hợp khôi phục tín hiệu (EMA, momentum, filtering).
-6. Kiến trúc DFL vừa robust vừa giữ độ chính xác.
+### 1. Scale `sigma_total` theo kích thước model
+
+- Lý do không dùng: giữ đơn giản theo yêu cầu hiện tại.
+- Hậu quả: với D lớn, noise tổng có thể bị giới hạn quá chặt.
+
+### 2. Attack signal phức tạp hơn
+
+- Có thể dùng `\|g_t - g_{t-1}\| / \|g_t\|` hoặc kết hợp nhiều chỉ số.
+- Hiện tại dùng trust đơn giản để giữ nguyên lý KISS.
+
+### 3. Full RDP min-alpha accounting trong mechanism
+
+- Lý do không dùng: quá phức tạp cho mục đích scheduler.
+- Giữ `RenyiAccountant` chính thức làm việc chính xác.
+
+### 4. Per-dimension noise cap
+
+- Ý tưởng tốt nhưng không cần thiết trong phiên bản hiện tại.
+- Đã chọn fixed global noise budget để dễ giám sát.
+
+---
+
+## Kết luận
+
+Triển khai hiện tại đáp ứng đầy đủ kiến trúc 4 lớp trong `noise-game.md`:
+
+- Layer 1 định nghĩa DP qua clipping và Gaussian noise.
+- Layer 2 điều phối noise bằng RDP heuristics và budget privacy.
+- Layer 3 xây noise chiến lược có cấu trúc hướng attack, vuông góc và phổ-aware.
+- Layer 4 duy trì recovery và cập nhật mô hình ổn định.
+
+Báo cáo này đã làm rõ từng bước thực hiện, lý do chọn tham số và các trade-off chính. Nếu cần, bước tiếp theo có thể là đánh giá thực nghiệm với metrics `avg_nsr`, `avg_sigma_dp`, và so sánh accuracy/trust trên CIFAR-10/MNIST.

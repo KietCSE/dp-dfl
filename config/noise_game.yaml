@@ -23,35 +23,64 @@ training:
 
 dp:
   noise_mode: none # noise-game self-manages strategic noise injection
-  clip_bound: 2.0 # used by NoiseGameMechanism
+  clip_bound: 1.0 # MNIST: C=1.0
   delta: 1.0e-5 # used by NoiseGameMechanism + accountant
-  epsilon_max: 10.0 # used by NoiseGameMechanism
-#  accountant: renyi_dpsgd # used for RDP accounting
+  epsilon_max: 60 # MNIST: epsilon=5-10
+  #  accountant: renyi_dpsgd # used for RDP accounting
   accountant_params:
-    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+    alpha_list:
+      [
+        1.01,
+        1.05,
+        1.1,
+        1.25,
+        1.5,
+        1.75,
+        2,
+        2.5,
+        3,
+        4,
+        5,
+        6,
+        8,
+        10,
+        12,
+        16,
+        20,
+        32,
+        50,
+        64,
+        100,
+        128,
+        256,
+        512,
+        1000,
+      ]
 
 attack:
   type: scale
   scale_factor: -5.0
 
 aggregation:
-  type: krum
-  params: {}
+    type: krum
+    params: 
+      n_attackers: 10  # MUST match topology.n_attackers
+      multi_k: 1
 
 noise_game:
-  alpha_attack: 0.5 # directional noise weight
-  sigma_0: 1.0 # initial noise scale
-  svd_rank: 16 # truncated SVD rank
-  svd_reshape_k: 64 # reshape gradient for SVD
-  momentum_beta: 0.9 # momentum decay
-  ema_gamma: 0.9 # EMA denoising factor
-  anneal_kappa: 0.02 # noise annealing decay
-  align_tau: 0.1 # gradient alignment threshold
+  alpha_attack: 0.1 # MNIST: directional noise weight
+  sigma_0: 1.0 # MNIST: initial noise scale
+  svd_rank: 16 # truncated SVD rank (giữ nguyên)
+  svd_reshape_k: 64 # reshape gradient for SVD (giữ nguyên)
+  momentum_beta: 0.9 # MNIST: momentum decay
+  ema_gamma: 0.9 # MNIST: EMA denoising factor
+  anneal_kappa: 0.01 # MNIST: noise annealing decay
+  align_tau: 0.2 # MNIST: gradient alignment threshold
   scaffold: true # SCAFFOLD variance reduction
   two_track: true # two-track model (clean + robust)
   two_track_lambda: 0.7 # clean model weight
-  beta_strat: 0.5 # strategic/DP noise coupling ratio
-  sigma_total: 3.0 # total noise energy cap
+  beta_strat: 0.3 # MNIST: strategic/DP noise coupling ratio
+  sigma_total: 2.0 # MNIST: total noise energy cap
   rdp_alpha: 2.0 # Renyi order for internal budget tracking
   nsr_warn: 5.0 # NSR warning threshold
 

@@ -11,7 +11,175 @@ Báo cáo này mô tả chi tiết cách hiện thực hóa chiến lược Nois
 
 Toàn bộ pipeline được triển khai trong `algorithms/noise_game/mechanism.py` và được liên kết với simulator bằng các tham số DP/adaptive. Các phần nội dung bên dưới giải thích rõ từng lớp, công thức, ý nghĩa và quyết định thiết kế.
 
+
+## Parameter Specification & Tuning Guide
+
+### 1. Mục tiêu
+
+Tài liệu này tổng hợp **toàn bộ tham số điều chỉnh** trong Noise Game, giải thích vai trò toán học, tác động khi thay đổi, lý do chọn công thức, và hướng dẫn tuning thực tế cho từng kịch bản (MNIST, CIFAR-10, DFL).
+
 ---
+
+### 2. Tổng quan công thức & ý nghĩa
+
+Noise Game là hệ điều khiển đóng (closed-loop) cho adaptive noise, với pipeline:
+$$
+g^{final}_t = \mathcal{R}\left(g_t + n_{DP,t} + n_{strat,t}\right)
+$$
+Trong đó:
+- $g_t$: gradient sau clipping
+- $n_{DP,t}$: Gaussian noise đảm bảo DP
+- $n_{strat,t}$: strategic noise tăng robustness
+- $\mathcal{R}$: recovery (EMA, momentum, filter)
+
+**Mục tiêu:**  
+- Đảm bảo privacy (DP)
+- Tăng robustness chống attack
+- Giữ chất lượng gradient (accuracy)
+
+---
+
+### 3. Giải thích công thức & lý do
+
+#### Layer 1 — Differential Privacy
+- **Clipping:** $g \leftarrow \frac{g}{\max(1, \|g\|/C)}$  
+  → Giới hạn sensitivity, đảm bảo DP meaningful.
+- **DP noise:** $n_{DP} \sim \mathcal{N}(0, \sigma_{DP}^2 I)$  
+  → Đảm bảo $(\epsilon, \delta)$-DP.
+- **Sigma floor:** $\sigma_{DP} \geq \frac{C\sqrt{2\ln(1.25/\delta)}}{\epsilon}$  
+  → Đảm bảo không giảm noise dưới mức cần thiết.
+
+#### Layer 2 — Adaptive Control (RDP-based)
+- **RDP tracker:** $\varepsilon_t(\alpha) = \frac{\alpha C^2}{2\sigma_{DP}^2}$  
+  → Theo dõi ngân sách privacy, điều phối noise.
+- **Adaptive scheduler:**  
+  $\sigma_{DP,t} = \sigma_0 e^{-\kappa t} \cdot \max(\text{floor}, 1 - \frac{\epsilon_{spent}}{\epsilon_{max}}) \cdot (1 + \text{attack})$  
+  → Giảm noise khi model ổn định, tăng khi bị attack hoặc còn nhiều budget.
+
+#### Layer 3 — Strategic Noise
+- **Directional:** $n_{attack} = \alpha (g_t - g_{t-1})$  
+  → Tăng noise theo hướng bất thường khi trust thấp.
+- **Orthogonal:** $n_{orth} = z - \frac{z \cdot g_t}{\|g_t\|^2}g_t$  
+  → Thêm nhiễu vuông góc, không phá hướng descent.
+- **Spectrum-aware:** $n_{spec} = U \cdot \mathrm{diag}(\lambda^{-1}) \cdot r$  
+  → Tăng entropy ở mode yếu, giảm mất mát thông tin.
+- **Kết hợp:** $n_{strat} = \sigma_{strat} \cdot \frac{n_{attack} + n_{orth} + n_{spec}}{\|...\|}$
+
+#### Global Constraint & NSR
+- **Energy cap:** $\|n_{DP}\|^2 + \|n_{strat}\|^2 \leq \sigma_{total}^2$  
+  → Không để noise quá lớn làm mất tín hiệu.
+- **NSR:** $\text{NSR} = \frac{\|n_{DP} + n_{strat}\|}{\|g\|}$  
+  → Theo dõi, cảnh báo khi noise quá cao.
+
+#### Layer 4 — Recovery
+- **EMA:** $\tilde{g}_t = \gamma \tilde{g}_{t-1} + (1-\gamma)\hat{g}_t$
+- **Momentum:** $m_t = \beta m_{t-1} + (1-\beta)\tilde{g}_t$
+- **Cosine filter:** Nếu $\cos(\hat{g}_t, \tilde{g}_{t-1}) < \tau$ thì reject.
+- **Trust scaling:** $g = trust \cdot m$
+
+---
+
+### 4. Ý nghĩa & tác động tham số
+
+| Tham số      | Vai trò toán học | Tăng lên           | Giảm xuống         |
+|--------------|------------------|--------------------|--------------------|
+| C            | Clip norm        | Ít bias, robust    | Mất thông tin      |
+| epsilon      | Privacy strength | Noise ↓, acc ↑     | Noise ↑, privacy ↑ |
+| delta        | Privacy slack    | Ít ảnh hưởng       | Noise ↑ nhẹ        |
+| sigma_0      | Noise ban đầu    | Robust ↑           | Acc ↑              |
+| kappa        | Decay speed      | Converge nhanh     | Noise giữ lâu      |
+| beta_strat   | Strat/DP ratio   | Robust ↑           | DP dominate        |
+| alpha_t      | Attack noise     | Robust ↑           | Ít bảo vệ          |
+| sigma_total  | Energy cap       | Linh hoạt          | Dễ clamp           |
+| nsr_warn     | NSR threshold    | Cảnh báo muộn      | Cảnh báo sớm       |
+| gamma        | EMA smoothing    | Mượt, ổn định      | Nhạy, dao động     |
+| beta         | Momentum         | Ổn định            | Dao động           |
+| tau          | Cosine filter    | Reject nhiều       | Nhận nhiều         |
+
+---
+
+### 5. Bộ tham số mẫu & hướng dẫn tuning
+
+#### MNIST (simple, low noise)
+| Tham số     | Giá trị đề xuất |
+|-------------|----------------|
+| C           | 1.0            |
+| epsilon     | 5 – 10         |
+| delta       | 1e-5           |
+| sigma_0     | 1.0            |
+| kappa       | 0.01           |
+| beta_strat  | 0.2 – 0.4      |
+| alpha_t     | 0.1            |
+| sigma_total | 2.0            |
+| gamma       | 0.9            |
+| beta        | 0.9            |
+| tau         | 0.2            |
+
+#### CIFAR-10 (medium complexity)
+| Tham số     | Giá trị đề xuất |
+|-------------|----------------|
+| C           | 1.0 – 2.0      |
+| epsilon     | 3 – 6          |
+| delta       | 1e-5           |
+| sigma_0     | 1.5 – 2.0      |
+| kappa       | 0.02           |
+| beta_strat  | 0.4 – 0.6      |
+| alpha_t     | 0.2 – 0.3      |
+| sigma_total | 3.0            |
+| gamma       | 0.95           |
+| beta        | 0.9            |
+| tau         | 0.3            |
+
+#### DFL (adversarial)
+| Tham số     | Giá trị đề xuất |
+|-------------|----------------|
+| C           | 1.0            |
+| epsilon     | 1 – 3          |
+| delta       | 1e-5           |
+| sigma_0     | 2.0 – 3.0      |
+| kappa       | 0.005          |
+| beta_strat  | 0.6 – 1.0      |
+| alpha_t     | 0.3 – 0.6      |
+| sigma_total | 3.0 – 5.0      |
+| gamma       | 0.98           |
+| beta        | 0.95           |
+| tau         | 0.4 – 0.6      |
+
+---
+
+### 6. Hướng dẫn tuning thực tế
+
+1. **Fix constraint:** Chọn epsilon, delta, C phù hợp yêu cầu privacy.
+2. **Set noise scale:** Điều chỉnh sigma_0, sigma_total để cân bằng robust/acc.
+3. **Tune robustness:** Tăng alpha_t, beta_strat nếu gặp attack.
+4. **Tune recovery:** Tăng gamma, beta nếu gradient nhiễu.
+
+---
+
+### 7. Lý do chọn công thức & độ phù hợp
+
+- **Công thức DP & RDP:** Chuẩn lý thuyết, đảm bảo privacy auditing.
+- **Adaptive scheduler:** Cho phép trade-off động giữa privacy, robust, acc.
+- **Strategic noise:** Kết hợp nhiều hướng để vừa chống attack vừa giữ tín hiệu.
+- **Constraint & NSR:** Đảm bảo hệ không bị noise quá lớn, cảnh báo kịp thời.
+- **Recovery:** Giúp mô hình không bị trôi khi noise mạnh.
+
+---
+
+### 8. Failure modes & cảnh báo
+
+- **Noise quá lớn:** NSR > 1, gradient nhiễu như random.
+- **Noise quá nhỏ:** Dễ bị poisoning.
+- **Constraint quá chặt:** Adaptive mất tác dụng.
+
+---
+
+### 9. Kết luận
+
+Noise Game là hệ adaptive noise control, cho phép điều chỉnh linh hoạt giữa privacy, robustness, accuracy. Việc tuning đúng tham số là chìa khóa để đạt hiệu quả tối ưu cho từng kịch bản.
+
+Nếu cần nâng cấp, nên bổ sung ablation study, sensitivity analysis, stability proof.
+
 
 ## Layer 1 — Differential Privacy Layer
 
