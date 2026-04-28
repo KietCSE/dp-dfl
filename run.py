@@ -120,6 +120,7 @@ def build_noise_game(config, dataset_cls, model_cls, param_dim, tracker, device)
         clip_bound=config.dp.clip_bound, delta=config.dp.delta,
         epsilon_max=config.dp.epsilon_max,
         beta_strat=ng.beta_strat, sigma_total=ng.sigma_total,
+        param_dim=param_dim,
         alpha_rd=ng.rdp_alpha)
     alpha_list = config.dp.accountant_params.get(
         "alpha_list", [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100])

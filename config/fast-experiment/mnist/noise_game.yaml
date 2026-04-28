@@ -1,24 +1,15 @@
 dataset:
-<<<<<<< HEAD
     name: mnist
     split:
         mode: iid
         samples_per_node: 1200 # each node draws 3000 random samples from 60k pool (overlap)
         alpha: 1.0 # ignored in iid mode
-=======
-  name: mnist
-  split:
-    mode: iid
-    samples_per_node: 1200    # each node draws 3000 random samples from 60k pool (overlap)
-    alpha: 1.0                # ignored in iid mode
->>>>>>> 78726ecd3673b3984535b4e7fdec1d06b5ff1fed
 
 model:
     name: mlp
-    hidden_size: 100
+    hidden_size: 32
 
 topology:
-<<<<<<< HEAD
     n_nodes: 50
     n_attackers: 10 # 40% Byzantine
     n_neighbors: 30
@@ -28,14 +19,14 @@ training:
     n_rounds: 50
     local_epochs: 1
     batch_size: 64
-    lr: 0.001
+    lr: 0.005    # tăng 10× để gradient grow nhanh, observed NSR rớt về ~15
     n_workers: 5
 
 dp:
     noise_mode: none # noise-game self-manages strategic noise injection
     clip_bound: 1.0 # MNIST: C=1.0
     delta: 1.0e-5
-    epsilon_max: 600 # Đủ cho 50 round, sigma_0=1.0, kappa=0.01
+    epsilon_max: 50 # σ_floor=0.097 < σ_total=0.5, đủ buffer cho 50 round
     accountant_params:
         alpha_list:
             [
@@ -65,80 +56,35 @@ dp:
                 512,
                 1000,
             ]
-    sampling_rate: 1.0 # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
+    sampling_rate: 0.5 # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 
 attack:
     type: scale
     scale_factor: -10.0 # standardized across all fast-experiment configs
-    start_round: 20 # clean rounds 0-19, attack activates at round 20
-=======
-  n_nodes: 50
-  n_attackers: 0          # 40% Byzantine
-  n_neighbors: 30
-  seed: 42
-
-training:
-  n_rounds: 100
-  local_epochs: 1
-  batch_size: 64
-  lr: 0.001
-  n_workers: 5
-
-dp:
-  noise_mode: none        # noise-game self-manages strategic noise injection
-  clip_bound: 10.0       # match dp_fedavg signal magnitude
-  delta: 1.0e-5
-  epsilon_max: 100000000.0
-  accountant_params:
-    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
-  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
-
-attack:
-  type: scale
-  scale_factor: -10.0     # standardized across all fast-experiment configs
-  start_round: 20         # clean rounds 0-19, attack activates at round 20
->>>>>>> 78726ecd3673b3984535b4e7fdec1d06b5ff1fed
+    start_round: 10 # clean rounds 0-19, attack activates at round 20
 
 aggregation:
     type: krum
     params: 
       n_attackers: 10  # MUST match topology.n_attackers
-      multi_k: 1
+      multi_k: 15
 
 noise_game:
-<<<<<<< HEAD
     alpha_attack: 0.1      # MNIST: giảm directional noise
-    sigma_0: 3.0           # MNIST: noise scale
+    sigma_0: 3.0           # z=1.0 → privacy multiplier có ý nghĩa
     svd_rank: 16
     svd_reshape_k: 64
     momentum_beta: 0.9
     ema_gamma: 0.9
-    anneal_kappa: 0.01     # decay chậm hơn, giữ noise đều cho 50 round
+    anneal_kappa: 0.01     # decay chậm, giữ noise đều cho 50 round
     align_tau: 0.2         # filter mạnh hơn
     scaffold: true
     two_track: true
     two_track_lambda: 0.7
     beta_strat: 0.3        # giảm coupling, tránh quá nhiều strat noise
-    sigma_total: 1.0       # MNIST: noise cap vừa phải
+    sigma_total: 0.5       # cap z=0.5 → NSR_design ≈ 141 (sàn DP-SGD khả thi)
     rdp_alpha: 2.0
-    nsr_warn: 5.0
-=======
-  alpha_attack: 0.5
-  sigma_0: 1.0
-  svd_rank: 16
-  svd_reshape_k: 64
-  momentum_beta: 0.9
-  ema_gamma: 0.9
-  anneal_kappa: 0.02
-  align_tau: 0.1
-  scaffold: true
-  two_track: true
-  two_track_lambda: 0.7
-  beta_strat: 0.5
-  sigma_total: 2.82      # = 0.282 * clip_bound, matches dp_fedavg noise/signal ratio (28.2%)
-  rdp_alpha: 2.0
-  nsr_warn: 5.0
->>>>>>> 78726ecd3673b3984535b4e7fdec1d06b5ff1fed
+    nsr_warn: 200.0        # NSR_design ≈ 141; cảnh báo khi observed > 200
 
 output_dir: ./results
 device: auto

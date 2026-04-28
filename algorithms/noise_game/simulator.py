@@ -112,6 +112,13 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     "sigma_dp": metrics["sigma_dp"],
                 }
 
+            # Commit one round's RDP cost to the internal scheduler tracker
+            # using avg sigma_dp across active honest nodes. Done ONCE per
+            # round to match outer accountant's per-round cadence (Bug #4 fix).
+            if sigma_dps:
+                avg_sigma_dp_round = float(np.mean(list(sigma_dps.values())))
+                self.game_mechanism.commit_round_rdp(avg_sigma_dp_round)
+
             # Phase 3: Aggregation (active nodes only)
             attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
@@ -154,6 +161,11 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     s for nid, s in all_steps.items() if nid not in self.attacker_ids)
                 q_batch = self.config.training.batch_size / self.nodes[
                     self.config.topology.n_attackers].n_samples
+                # Compose with client-level Poisson sub-sampling for privacy
+                # amplification (Bug #6 fix). For item-level DP, P[record sampled]
+                # = q_client · q_batch (independent Poisson layers).
+                q_client = max(min(float(self.config.dp.sampling_rate), 1.0), 0.0)
+                q_composed = q_client * q_batch
                 post_cap_dp_norms = [
                     e["n_dp_norm"] for e in extra_node.values()
                     if "n_dp_norm" in e]
@@ -163,7 +175,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     effective_mult = max(sigma_eff / (C + 1e-12), 0.01)
                 else:
                     effective_mult = 0.01
-                self.accountant.step(honest_steps, q_batch, effective_mult)
+                self.accountant.step(honest_steps, q_composed, effective_mult)
                 epsilon = self.accountant.get_epsilon()
 
             # Pre-cap σ kept for diagnostic reporting only (not for ε).

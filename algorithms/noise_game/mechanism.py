@@ -24,7 +24,8 @@ class NoiseGameMechanism:
     def __init__(self, alpha_attack: float, sigma_0: float,
                  anneal_kappa: float, svd_rank: int, svd_reshape_k: int,
                  clip_bound: float, delta: float, epsilon_max: float,
-                 beta_strat: float, sigma_total: float, alpha_rd: float = 2.0):
+                 beta_strat: float, sigma_total: float, param_dim: int,
+                 alpha_rd: float = 2.0):
         self.alpha_attack = alpha_attack
         self.sigma_0 = sigma_0
         self.anneal_kappa = anneal_kappa
@@ -36,6 +37,10 @@ class NoiseGameMechanism:
         self.epsilon_max = epsilon_max
         self.beta_strat = beta_strat
         self.sigma_total = sigma_total
+        # sigma_total is interpreted as per-dimension std cap; energy budget
+        # then scales as (sigma_total)^2 * D so the cap aligns with sigma_0
+        # (also per-dim). See REPORT.md "Lựa chọn đã cân nhắc" #1.
+        self.param_dim = max(int(param_dim), 1)
         self.alpha_rd = alpha_rd
         # Internal RDP budget tracker (heuristic for adaptive scheduler).
         # NOTE (Bug #2 fix): this is RDP_α, NOT (ε, δ)-DP epsilon. Use
@@ -154,11 +159,30 @@ class NoiseGameMechanism:
 
     # -- Budget constraint --
 
+    def commit_round_rdp(self, sigma_dp_round: float) -> None:
+        """Accumulate one round's worth of RDP cost into the internal tracker.
+
+        Called ONCE per round by the simulator (not per honest node), to match
+        the outer accountant's per-round cadence under node-level DP. Updating
+        per-call would multiply the cost by num_active_honest_nodes, conflate
+        node-level DP with group privacy, and crash the adaptive scheduler's
+        budget prematurely (see Bug #4 in plans/code-trong-th-m-c-...md).
+        """
+        if sigma_dp_round > 1e-12:
+            self.rdp_spent += self.alpha_rd * self.clip_bound ** 2 / (
+                2.0 * sigma_dp_round ** 2)
+
     def _enforce_budget(self, n_dp: torch.Tensor,
                         n_strat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Scale both noises proportionally if total energy exceeds cap."""
+        """Scale both noises proportionally if total energy exceeds cap.
+
+        Cap = (sigma_total)^2 * D — interprets sigma_total as per-dimension
+        std cap (same unit as sigma_0). Without the D factor the cap is an
+        absolute L2-norm threshold, which forces sigma_eff_post ≈ sigma_total/√D
+        and inflates the privacy cost by ~D× when D is large.
+        """
         energy = n_dp.norm() ** 2 + n_strat.norm() ** 2
-        cap = self.sigma_total ** 2
+        cap = (self.sigma_total ** 2) * self.param_dim
         if energy > cap and energy > 1e-12:
             factor = math.sqrt(cap / energy.item())
             return n_dp * factor, n_strat * factor
@@ -207,12 +231,9 @@ class NoiseGameMechanism:
         g_norm = gradient.norm().item()
         nsr = total_noise.norm().item() / (g_norm + 1e-12)
 
-        # Track approximate RDP_α cost using fixed Renyi order and clip bound.
-        # Mironov 2017 Gaussian RDP:  RDP(α) = α · C² / (2 · σ²)
-        # Note: this is RDP, NOT (ε, δ)-DP. Use compute_eps_dp() to convert.
-        if sigma_dp > 1e-12:
-            self.rdp_spent += self.alpha_rd * self.clip_bound ** 2 / (
-                2.0 * sigma_dp ** 2)
+        # NOTE: rdp_spent is committed ONCE per round by simulator via
+        # commit_round_rdp(), not here. Updating per-call would over-count
+        # by num_honest_active_nodes (see commit_round_rdp docstring).
 
         metrics = {
             "trust": trust,
