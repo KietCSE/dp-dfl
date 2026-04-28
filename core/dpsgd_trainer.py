@@ -44,8 +44,8 @@ class DPSGDTrainer:
         if self.noise_mode == "per_step":
             return self._train_dpsgd_per_step(model, dataset, noise_mechanism, apply_noise)
 
-        # update, n_steps = self._train_standard_sgd(model, dataset)
-        update, n_steps = self._train_federated_sgd(model, dataset)
+        update, n_steps = self._train_standard_sgd(model, dataset)
+        # update, n_steps = self._train_federated_sgd(model, dataset)
 
         if self.noise_mode == "post_training":
             update = self._apply_post_training_dp(update, noise_mechanism, apply_noise)

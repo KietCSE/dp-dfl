@@ -87,7 +87,7 @@ trust:
     beta_soft: 3.0
     # Momentum + global step
     beta_m: 0.9
-    eta_global: 0.1 # match training.lr for cross-algo signal parity
+    eta_global: 0.001 # match training.lr for cross-algo signal parity
 
 output_dir: ./results
 device: auto

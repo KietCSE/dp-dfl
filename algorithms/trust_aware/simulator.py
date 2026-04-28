@@ -153,7 +153,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 atk = self.attack if (node.is_attacker and attack_active) else None
                 upd, _ = node.compute_update(
                     self.trainer, self.noise_mechanism, atk, apply_noise=False)
-                return node.id, upd
+                return node.id, upd / (-1 * self.trainer.lr)
 
             raw_updates: Dict[int, torch.Tensor] = {}
             if n_workers > 1:
