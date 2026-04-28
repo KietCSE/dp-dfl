@@ -7,11 +7,7 @@ dataset:
 
 model:
     name: mlp
-<<<<<<< HEAD
     hidden_size: 32
-=======
-    hidden_size: 100
->>>>>>> 5ca3856 (feat: update trust-aware algorithms)
 
 topology:
     n_nodes: 50
@@ -20,30 +16,17 @@ topology:
     seed: 42
 
 training:
-<<<<<<< HEAD
     n_rounds: 50
     local_epochs: 1
     batch_size: 64
-    lr: 0.005    # tăng 10× để gradient grow nhanh, observed NSR rớt về ~15
-=======
-    n_rounds: 100
-    local_epochs: 1
-    batch_size: 64
-    lr: 0.001
->>>>>>> 5ca3856 (feat: update trust-aware algorithms)
+    lr: 0.005 # tăng 10× để gradient grow nhanh, observed NSR rớt về ~15
     n_workers: 5
 
 dp:
     noise_mode: none # noise-game self-manages strategic noise injection
-<<<<<<< HEAD
     clip_bound: 1.0 # MNIST: C=1.0
     delta: 1.0e-5
     epsilon_max: 50 # σ_floor=0.097 < σ_total=0.5, đủ buffer cho 50 round
-=======
-    clip_bound: 10.0 # match dp_fedavg signal magnitude
-    delta: 1.0e-5
-    epsilon_max: 100000000.0
->>>>>>> 5ca3856 (feat: update trust-aware algorithms)
     accountant_params:
         alpha_list:
             [
@@ -73,63 +56,35 @@ dp:
                 512,
                 1000,
             ]
-<<<<<<< HEAD
     sampling_rate: 0.5 # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
-=======
-    sampling_rate: 1.0 # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
->>>>>>> 5ca3856 (feat: update trust-aware algorithms)
 
 attack:
     type: scale
     scale_factor: -10.0 # standardized across all fast-experiment configs
-<<<<<<< HEAD
     start_round: 10 # clean rounds 0-19, attack activates at round 20
 
 aggregation:
     type: krum
-    params: 
-      n_attackers: 10  # MUST match topology.n_attackers
-      multi_k: 15
+    params:
+        n_attackers: 10 # MUST match topology.n_attackers
+        multi_k: 15
 
 noise_game:
-    alpha_attack: 0.1      # MNIST: giảm directional noise
-    sigma_0: 3.0           # z=1.0 → privacy multiplier có ý nghĩa
-=======
-    start_round: 20 # clean rounds 0-19, attack activates at round 20
-
-aggregation:
-    type: krum
-    params: {}
-
-noise_game:
-    alpha_attack: 0.5
-    sigma_0: 1.0
->>>>>>> 5ca3856 (feat: update trust-aware algorithms)
+    alpha_attack: 0.1 # MNIST: giảm directional noise
+    sigma_0: 3.0 # z=1.0 → privacy multiplier có ý nghĩa
     svd_rank: 16
     svd_reshape_k: 64
     momentum_beta: 0.9
     ema_gamma: 0.9
-<<<<<<< HEAD
-    anneal_kappa: 0.01     # decay chậm, giữ noise đều cho 50 round
-    align_tau: 0.2         # filter mạnh hơn
+    anneal_kappa: 0.01 # decay chậm, giữ noise đều cho 50 round
+    align_tau: 0.2 # filter mạnh hơn
     scaffold: true
     two_track: true
     two_track_lambda: 0.7
-    beta_strat: 0.3        # giảm coupling, tránh quá nhiều strat noise
-    sigma_total: 0.5       # cap z=0.5 → NSR_design ≈ 141 (sàn DP-SGD khả thi)
+    beta_strat: 0.3 # giảm coupling, tránh quá nhiều strat noise
+    sigma_total: 0.5 # cap z=0.5 → NSR_design ≈ 141 (sàn DP-SGD khả thi)
     rdp_alpha: 2.0
-    nsr_warn: 200.0        # NSR_design ≈ 141; cảnh báo khi observed > 200
-=======
-    anneal_kappa: 0.02
-    align_tau: 0.1
-    scaffold: true
-    two_track: true
-    two_track_lambda: 0.7
-    beta_strat: 0.5
-    sigma_total: 2.82 # = 0.282 * clip_bound, matches dp_fedavg noise/signal ratio (28.2%)
-    rdp_alpha: 2.0
-    nsr_warn: 5.0
->>>>>>> 5ca3856 (feat: update trust-aware algorithms)
+    nsr_warn: 200.0 # NSR_design ≈ 141; cảnh báo khi observed > 200
 
 output_dir: ./results
 device: auto
