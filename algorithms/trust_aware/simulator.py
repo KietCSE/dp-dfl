@@ -64,7 +64,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
     # ── Phase 1+2: train + per-layer clip + per-layer bounded noise ──────────
 
     def _build_packet(self, node: TrustAwareNode, raw_update: torch.Tensor,
-                      rho_t: float):
+                      rho_t: float, sampling_rate: float):
         """Per-layer clip → noise. Returns (own_clipped_flat, packet_flat,
         sigma_sq_per_layer). Attackers skip noise but still get clipped."""
         layers = list(torch.split(raw_update, self._layer_sizes))
@@ -82,9 +82,27 @@ class TrustAwareDFLSimulator(BaseSimulator):
         for cl_layer, thr in zip(clipped_layers, thresholds):
             clip_l = thr if thr is not None else cl_layer.norm(2).item()
             sigma_sq = self.bounded_noise.compute_noise_variance(clip_l, rho_t)
+            
+            # Compute step epsilon dynamically for the specific layer's clip and sigma
+            epsilon_l = 100000.0
+            if getattr(self, "accountant", None) is not None:
+                from opacus.accountants.analysis.rdp import compute_rdp, get_privacy_spent
+                noise_mult = math.sqrt(max(sigma_sq, 1e-12)) / max(clip_l, 1e-12)
+                rdp = compute_rdp(
+                    q=float(sampling_rate),
+                    noise_multiplier=noise_mult,
+                    steps=1,
+                    orders=self.accountant.alpha_list,
+                )
+                epsilon_l, _ = get_privacy_spent(
+                    orders=self.accountant.alpha_list,
+                    rdp=rdp,
+                    delta=self.accountant.delta,
+                )
+
             sigma_sqs.append(sigma_sq)
             noisy_layers.append(
-                self.bounded_noise.add_bounded_noise(cl_layer, sigma_sq))
+                self.bounded_noise.add_bounded_noise(cl_layer, sigma_sq, epsilon_l))
         packet = torch.cat([nl.reshape(-1) for nl in noisy_layers])
         return own_clipped, packet, sigma_sqs
 
@@ -135,7 +153,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 atk = self.attack if (node.is_attacker and attack_active) else None
                 upd, _ = node.compute_update(
                     self.trainer, self.noise_mechanism, atk, apply_noise=False)
-                return node.id, upd
+                return node.id, upd / (-1 * self.trainer.lr)
 
             raw_updates: Dict[int, torch.Tensor] = {}
             if n_workers > 1:
@@ -156,7 +174,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                     continue
                 upd = raw_updates[node.id]
                 updates[node.id] = upd
-                oc, pkt, ssqs = self._build_packet(node, upd, rho_t)
+                oc, pkt, ssqs = self._build_packet(node, upd, rho_t, sampling_rate)
                 own_clipped[node.id] = oc
                 packets[node.id] = pkt
                 sigma_sq_map[node.id] = ssqs

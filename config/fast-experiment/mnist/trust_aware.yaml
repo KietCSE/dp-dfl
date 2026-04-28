@@ -1,66 +1,93 @@
 dataset:
-  name: mnist
-  split:
-    mode: iid
-    samples_per_node: 1200    # each node draws 1200 random samples from 60k pool (overlap)
-    alpha: 1.0                # ignored in iid mode
+    name: mnist
+    split:
+        mode: iid
+        samples_per_node: 1200 # each node draws 1200 random samples from 60k pool (overlap)
+        alpha: 1.0 # ignored in iid mode
 
 model:
-  name: mlp
-  hidden_size: 100
+    name: mlp
+    hidden_size: 100
 
 topology:
-  n_nodes: 50
-  n_attackers: 0
-  n_neighbors: 30
-  seed: 42
+    n_nodes: 50
+    n_attackers: 10
+    n_neighbors: 30
+    seed: 42
 
 training:
-  n_rounds: 100
-  local_epochs: 1
-  batch_size: 64
-  lr: 0.001
-  n_workers: 5
+    n_rounds: 50
+    local_epochs: 1
+    batch_size: 64
+    lr: 0.001
+    n_workers: 5
 
 dp:
-  noise_mode: none            # D2B-DP injects per-layer noise itself (Step 3)
-  delta: 1.0e-5
-  epsilon_max: 100000000.0
-  accountant: renyi_dpsgd
-  accountant_params:
-    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
-  sampling_rate: 1.0
+    noise_mode: none # D2B-DP injects per-layer noise itself (Step 3)
+    delta: 1.0e-5
+    epsilon_max: 100000000.0
+    accountant: renyi_dpsgd
+    accountant_params:
+        alpha_list:
+            [
+                1.01,
+                1.05,
+                1.1,
+                1.25,
+                1.5,
+                1.75,
+                2,
+                2.5,
+                3,
+                4,
+                5,
+                6,
+                8,
+                10,
+                12,
+                16,
+                20,
+                32,
+                50,
+                64,
+                100,
+                128,
+                256,
+                512,
+                1000,
+            ]
+    sampling_rate: 1.0
 
 attack:
-  type: scale
-  scale_factor: -10.0
-  start_round: 20
+    type: scale
+    scale_factor: -10.0
+    start_round: 20
 
 aggregation:
-  type: trust_aware_d2b
-  params: {}
+    type: trust_aware_d2b
+    params: {}
 
 trust:
-  # Step 2 — adaptive clip
-  k: 5
-  bound_k: 3.0
-  # Step 3 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
-  rho_min: 0.1
-  rho_max: 1.0
-  beta: 0.05
-  # Step 5 — anomaly threshold
-  theta: 1.1
-  gamma: 2.5
-  kappa: 5.0
-  # Step 6 — trust EMA
-  alpha_T: 0.85
-  trust_init: 1.0
-  # Step 7 — softmax aggregation
-  T_min: 0.3
-  beta_soft: 3.0
-  # Momentum + global step
-  beta_m: 0.9
-  eta_global: 0.001          # match training.lr for cross-algo signal parity
+    # Step 2 — adaptive clip
+    k: 5
+    bound_eta: 0.5
+    # Step 3 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
+    rho_min: 0.1
+    rho_max: 3.0
+    beta: 0.1
+    # Step 5 — anomaly threshold
+    theta: 0.1
+    gamma: 1
+    kappa: 15.0
+    # Step 6 — trust EMA
+    alpha_T: 0.85
+    trust_init: 1.0
+    # Step 7 — softmax aggregation
+    T_min: 0.3
+    beta_soft: 3.0
+    # Momentum + global step
+    beta_m: 0.9
+    eta_global: 0.001 # match training.lr for cross-algo signal parity
 
 output_dir: ./results
 device: auto

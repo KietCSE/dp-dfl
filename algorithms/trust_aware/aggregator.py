@@ -9,13 +9,9 @@ Implements Steps 4-7 of docs/Trust-Aware-D2B-DP.md:
              then momentum:  V_agg = β_m·V_agg + (1-β_m)·S_agg
                               W    = W_old + η_global·V_agg
 
-Sign note (doc convention): Sec 7 of the spec writes
+Sign note: Sec 7 of the spec writes
     W_i^(t) = W_i^(t-1) - η_global · V_agg
-but ΔW = W_trained - W_old is positive forward-progress, so subtracting drives
-the model away from the consensus direction. We use `+` to match every other
-delta-aggregation algorithm in this codebase (FedAvg / Krum / Trimmed Mean) and
-to converge toward neighbors' learning signal — interpreting the doc's `-` as a
-notational convention error. State (V_agg, trust_scores) lives on the node.
+We strictly follow the specification. State (V_agg, trust_scores) lives on the node.
 """
 
 import math
@@ -117,7 +113,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
         if V_agg_prev is None:
             V_agg_prev = torch.zeros_like(own_update)
         V_agg = self.beta_m * V_agg_prev + (1.0 - self.beta_m) * S_agg
-        new_params = W_old + self.eta_global * V_agg
+        new_params = W_old - self.eta_global * V_agg
 
         return AggregationResult(
             new_params=new_params,
