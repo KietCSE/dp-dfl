@@ -128,14 +128,22 @@ Layer 3 xây dựng phần noise chiến lược `n_{strategic}` sao cho vừa c
    - `z` là vector ngẫu nhiên; thành phần này thuần túy ở không gian vuông góc với gradient.
    - Mục đích là tăng entropy noise nhưng không phá hoại hướng chính của gradient.
 
-3. Spectrum-aware noise:
-   - Dựng noise theo phân tích phổ của gradient.
-   - Dạng triển khai dùng giả SVD/truncated SVD và nghịch đảo giá trị riêng để tạo noise trên không gian phổ:
+3. Reshape-decomposed noise (a.k.a. "spectrum"):
+   - Dựng noise theo SVD của **2D reshape nhân tạo** của gradient vector. Lưu ý: KHÔNG phải spectrum thật của model weights/layers.
+   - Pipeline thực tế (theo [mechanism.py:132–158](../algorithms/noise_game/mechanism.py#L132-L158)):
      ```math
-     n_{spec} = U \cdot \mathrm{diag}(\lambda^{-1}) \cdot r
+     \begin{aligned}
+     & \tilde g = [g_t \;\|\; 0_{\text{pad}}], \quad M = \mathrm{reshape}(\tilde g, \; (k, c)) \\
+     & M \approx U \Sigma V^\top, \quad U \in \mathbb{R}^{k \times r}, \; V \in \mathbb{R}^{c \times r}, \; r = \min(R, k, c) \\
+     & w = (\Sigma + \epsilon_{\text{reg}})^{-1}, \quad \epsilon_{\text{reg}} = 10^{-8} \quad \text{(regularization tránh blow-up)}\\
+     & \rho \sim \mathcal{N}(0, \sigma^2 I_r) \\
+     & n_{spec} = \mathrm{flatten}\big(U \cdot \mathrm{diag}(w \odot \rho) \cdot V^\top\big)[:D]
+     \end{aligned}
      ```
-   - `r` là vector ngẫu nhiên, `\lambda` là các giá trị riêng.
-   - Tính năng này giúp noise chú trọng tới các thành phần phổ yếu hơn, làm giảm thiểu tổn thất thông tin ở các không gian có tín hiệu lớn.
+   - Tham số: `svd_reshape_k = k` (mặc định 64), `svd_rank = R` (mặc định 16).
+   - **Caveat**: reshape là tuần tự arbitrary (`g[i·c + j] → M[i,j]`), KHÔNG theo layer boundaries — params từ multiple layers bị trộn vào row/col mà không có cấu trúc semantic. Singular vectors $U, V$ phản ánh structure của artificial reshape, không phải spectrum thật của model. Tên "spectrum-aware" giữ để backward-compat; honest naming sẽ là **"low-rank-shaped structured noise"**.
+   - Tính chất kỹ thuật: $w_i = 1/(\Sigma_{ii} + 10^{-8})$ — singular value càng nhỏ → weight càng lớn → noise tập trung vào mode yếu của reshape matrix, đảm bảo không Inf/NaN khi $\Sigma_{ii} \to 0$.
+   - Edge case: SVD fail (matrix degenerate) → fallback `n_spec = randn_like(g) * sigma` ([mechanism.py:148–149](../algorithms/noise_game/mechanism.py#L148-L149)).
 
 4. Kết hợp và chuẩn hoá noise:
    - Tổng hợp các thành phần:

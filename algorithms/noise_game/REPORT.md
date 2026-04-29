@@ -65,7 +65,38 @@ n_{\text{strat},t} = \sigma_{\text{strat},t} \cdot \hat n_t
 |---|---|---|---|
 | Directional | $n_{\text{attack}} = \alpha (1-\text{trust})(g_t - g_{t-1})$ | [mechanism.py:111–115](mechanism.py#L111-L115) | Phòng thủ theo hướng attack |
 | Orthogonal | $n_{\text{orth}} = z - \dfrac{z\cdot g_t}{\\|g_t\\|^2} g_t$ | [mechanism.py:117–125](mechanism.py#L117-L125) | Tăng entropy không phá descent |
-| Spectrum-aware | $n_{\text{spec}} = U \cdot \text{diag}(\lambda^{-1}) \cdot r$ (truncated SVD) | [mechanism.py:127–153](mechanism.py#L127-L153) | Boost mode phổ yếu |
+| Reshape-decomposed (a.k.a. "spectrum") | xem chi tiết §2.1 dưới | [mechanism.py:132–158](mechanism.py#L132-L158) | Cấu trúc noise theo phân rã low-rank của 2D-reshape gradient |
+
+#### 2.1 Reshape-decomposed noise (chi tiết)
+
+**Pipeline thực tế trong [mechanism.py:132–158](mechanism.py#L132-L158)**:
+
+```math
+\begin{aligned}
+& \text{1. Pad: } \tilde g = [g_t \;\|\; \mathbf{0}_{kc - D}] \in \mathbb{R}^{kc}, \quad k=\min(K, D),\; c=\lceil D/k \rceil \\
+& \text{2. Reshape: } M = \mathrm{reshape}(\tilde g, \; (k, c)) \in \mathbb{R}^{k \times c} \\
+& \text{3. Truncated SVD: } M \approx U \Sigma V^\top, \quad U \in \mathbb{R}^{k \times r},\; V \in \mathbb{R}^{c \times r},\; r=\min(R, k, c) \\
+& \text{4. Regularized inverse: } w = (\Sigma + \epsilon_{\text{reg}})^{-1}, \quad \epsilon_{\text{reg}} = 10^{-8} \\
+& \text{5. Random projection: } \rho \sim \mathcal{N}(0, \sigma^2 I_r) \\
+& \text{6. Reconstruct \& truncate: } n_{\text{spec}} = \mathrm{flatten}\big(U \cdot \mathrm{diag}(w \odot \rho) \cdot V^\top\big)[:D]
+\end{aligned}
+```
+
+**Tham số code**: $K$ = `svd_reshape_k` (mặc định 64), $R$ = `svd_rank` (mặc định 16).
+
+**Caveat — semantic của "spectrum" ở đây**:
+
+- $U$, $\Sigma$, $V$ là singular decomposition của **2D reshape nhân tạo** của gradient vector, **KHÔNG PHẢI** spectrum của model weights theo từng layer. Reshape là `g[i·c + j] → M[i,j]` — tuần tự, KHÔNG theo layer boundaries → params từ nhiều layers (weights, biases, BN) bị trộn vào cùng row/col mà không có ý nghĩa cấu trúc.
+- Tên gọi "spectrum-aware" có thể gây hiểu nhầm; honest naming là **"reshape-decomposed noise"** hoặc **"low-rank-shaped structured noise"**.
+- Hyperparam $K=64$ chọn empirical; thay đổi $K$ → matrix shape khác → SVD khác → noise pattern khác hẳn (KHÔNG có theoretical justification chọn 64).
+
+**Tính chất giữ được**:
+
+- $\Sigma_{ii} \ge 0$ → $w_i = 1/(\Sigma_{ii} + 10^{-8}) \in (0, 10^8]$, không Inf/NaN.
+- Singular value càng nhỏ ($\Sigma_{ii} \to 0$) → weight $w_i$ càng lớn → noise tập trung vào "spectral mode yếu" của reshape matrix (đúng claim của doc gốc, nhưng "mode" ở đây là mode của reshape, không phải của model).
+- Output $n_{\text{spec}} \in \mathbb{R}^D$ đảm bảo cùng dim với gradient.
+
+**Edge case**: nếu `torch.svd_lowrank` raise `RuntimeError` (matrix degenerate) → fallback `n_spec = randn_like(g) * sigma` ([mechanism.py:148–149](mechanism.py#L148-L149)).
 
 ### Layer 4 — Recovery
 
@@ -315,6 +346,7 @@ Combine 3 thành phần (directional + orthogonal + spectrum) → normalize unit
 | Full RDP min-α accounting trong mechanism | Outer accountant đã làm chính xác hơn |
 | Per-dimension noise cap | Không cần thiết, fixed global budget đủ giám sát |
 | RDP nhân với num_honest_nodes (group privacy) | Sai paradigm — node-level DP đủ |
+| True per-layer SVD cho spectrum noise (Case A) | Phá existing experiments; cần re-tune σ_total + alignment threshold; eps trajectory đổi. Hiện giữ artificial reshape (Case A') để backward-compat — đã document caveat trong §2.1. |
 
 ---
 

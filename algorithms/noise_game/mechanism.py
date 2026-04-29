@@ -131,7 +131,28 @@ class NoiseGameMechanism:
 
     def spectrum_noise(self, gradient: torch.Tensor,
                        sigma: float) -> torch.Tensor:
-        """Spectrum-aware noise via truncated SVD."""
+        """Reshape-decomposed structured noise (a.k.a. "spectrum-aware").
+
+        Pipeline:
+          1. Pad gradient to length k * cols, reshape to matrix M ∈ R^{k×cols}
+             where k = svd_reshape_k, cols = ceil(D/k).
+          2. Truncated low-rank SVD: M ≈ U·Σ·V^T, rank = min(svd_rank, k, cols).
+          3. Regularized inverse weights: w = 1/(Σ + 1e-8) (guard blow-up when
+             singular value → 0).
+          4. Random projection: ρ ~ N(0, σ²·I_rank).
+          5. Reconstruct + flatten: n_spec = (U·diag(w⊙ρ)·V^T).flatten()[:D].
+
+        Caveat — semantics of "spectrum" here:
+          U, Σ, V are singular decomposition of the ARTIFICIAL 2D reshape of the
+          flat gradient vector — NOT the spectrum of model weights/layers.
+          Reshape mapping is sequential (g[i·cols + j] → M[i,j]) and does not
+          align with layer boundaries; params from multiple layers (weights,
+          biases, BN) get mixed into rows/cols without semantic structure.
+          Honest naming would be "low-rank-shaped structured noise".
+
+        Edge case: torch.svd_lowrank can raise RuntimeError on degenerate
+        matrices → fallback to plain Gaussian noise of the same magnitude.
+        """
         D = gradient.numel()
         k = min(self.svd_reshape_k, D)
         cols = math.ceil(D / k)
