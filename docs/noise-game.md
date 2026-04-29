@@ -160,6 +160,35 @@ Layer 3 xây dựng phần noise chiến lược `n_{strategic}` sao cho vừa c
      ```
    - Điều này đảm bảo độ lớn noise chiến lược được kiểm soát bởi `\sigma_{strat,t}` và hướng noise được chuẩn hoá.
 
+### Privacy của n_strategic (Bug #9 — Lipschitz inflation, đã fix auto-inflate)
+
+`n_strategic` phụ thuộc trực tiếp vào `g` (raw gradient) qua các thành phần directional, orthogonal, spectrum. Strict Gaussian Mechanism RDP bound `α·C²/(2σ²)` chỉ valid khi noise độc lập với input → ở đây bound bị inflate.
+
+**Lipschitz analysis:**
+- Sau normalize: `‖n_strat(g)‖ = σ_strat` constant.
+- Worst-case `‖n_strat(g) - n_strat(g')‖ ≤ 2·σ_strat` (direction flip).
+- Effective Lipschitz: `L_strat = 2·σ_strat / C = 2·β_strat·z` (với `z = σ_DP/C`).
+
+**Effective sensitivity:**
+```math
+C_{total} = C \cdot (1 + L_{strat}) = C \cdot (1 + 2 \beta_{strat} z)
+```
+
+**Inflation factor cho RDP:**
+```math
+\text{inflation} = (1 + L_{strat})^2 = (1 + 2 \beta_{strat} z)^2
+```
+
+Bảng (β=0.3): z=0.5 → 1.69×, z=1.0 → 2.56×, z=3.0 → 7.84×.
+
+**Implementation (sau Bug #9 fix):** simulator.py phase 4 tự động pass `effective_mult = σ_DP / C_total` (thay vì `σ_DP / C`) vào Opacus → ε reported đã RIGOROUS, include inflation. **Không cần manual correction khi publish paper.** Xem `algorithms/noise_game/REPORT.md` §4.1 và Bug #9 để chi tiết.
+
+**Lý do CHỌN auto-inflate (Option A') thay vì post-processing (Option B):**
+- Compute `n_strat` từ noisy `Y = g + n_DP` (Option B) phá vỡ robustness: `Y` có SNR `~ 1/(z·√D)` → trong heavy-noise regime, attack signal indistinguishable from noise → Layer 3 vô hiệu hoàn toàn (default config: SNR ≈ 0.6%).
+- Auto-inflate (Option A') giữ utility/robustness từ raw-g version, chỉ inflate accountant ε rigorously.
+
+**Caveat về Lipschitz formal:** True Lipschitz unbounded tại origin (normalize step). Bound effective dựa trên max gradient distance `‖g-g'‖ ≤ C` — đủ chặt cho practical, cần guard `‖g‖ ≥ δ_min` cho paper-quality proof formal.
+
 ### File liên quan
 
 - `algorithms/noise_game/mechanism.py` → `directional_noise()`, `orthogonal_noise()`, `spectrum_noise()`

@@ -135,6 +135,8 @@ n_{\text{strat},t} = \sigma_{\text{strat},t} \cdot \hat n_t
 
 Cảnh báo khi `NSR > nsr_warn` ([simulator.py:85–87](simulator.py#L85-L87)). Round logs lưu `avg_nsr`, `avg_n_dp_norm_postcap`, `avg_sigma_dp_precap` để theo dõi xu hướng.
 
+**Note sau Bug #7 fix**: tên `avg_n_dp_norm_postcap` còn giữ legacy name nhưng sau Bug #7 fix, cap KHÔNG rescale n_DP nữa → `postcap == precap` cho n_DP. Field này đo `‖n_DP‖` thực tế ≈ `σ_DP·√D` (Gaussian concentration). `avg_sigma_dp_precap` = scheduler output σ_DP.
+
 ---
 
 ## 4. Privacy Accounting
@@ -159,6 +161,51 @@ accountant.step(honest_steps, q_composed, effective_mult)
 Lý do dùng `σ_DP` scheduler trực tiếp: sau Bug #7 fix, cap chỉ rescale `n_strat` → `n_DP` giữ nguyên distribution Gaussian thuần `N(0, σ_DP²·I)` → Gaussian Mechanism guarantee `RDP_α = α·C²/(2σ_DP²)` apply exact với `σ = σ_DP` từ scheduler.
 
 **Trước Bug #7 fix** (legacy): cap rescale CẢ `n_DP` → distribution không còn Gaussian → phải dùng proxy `σ_eff = ‖n_dp_post‖/√D` (sample-based estimate, conservative heuristic, không rigorous).
+
+### 4.1 Effective sensitivity C_total (Lipschitz bound — Bug #9)
+
+**Caveat quan trọng:** Output `Y = g + n_DP + n_strat` where `n_strat` depends on raw `g` (Layer 3). Standard Gaussian Mechanism RDP bound `α·C²/(2σ²)` assumes noise INDEPENDENT của input → KHÔNG apply tight với current design.
+
+**Lipschitz analysis** của map `g ↦ n_strat(g)`:
+
+Sau normalize step ([mechanism.py:236-244](mechanism.py#L236-L244)):
+- `‖n_strat(g)‖ = σ_strat` (constant magnitude after normalize)
+- Worst-case `‖n_strat(g) - n_strat(g')‖ ≤ 2·σ_strat` (direction flip)
+- Effective Lipschitz (với max gradient distance `‖g-g'‖ ≤ C`):
+
+$$L_{\text{strat}} = \frac{2\sigma_{\text{strat}}}{C} = 2\beta_{\text{strat}}\,z, \quad z = \sigma_{DP}/C$$
+
+**Effective sensitivity:**
+
+$$C_{\text{total}} = C \cdot (1 + L_{\text{strat}}) = C \cdot (1 + 2\beta_{\text{strat}}\,z)$$
+
+**True RDP bound:**
+
+$$\text{RDP}_\alpha = \frac{\alpha \cdot C_{\text{total}}^2}{2\sigma_{DP}^2} = \frac{\alpha \cdot C^2 \cdot (1+L_{\text{strat}})^2}{2\sigma_{DP}^2}$$
+
+**Inflation factor** so với naive bound `α·C²/(2·σ_DP²)`:
+
+| z (σ_DP/C) | L_strat (β=0.3) | C_total/C | inflation = (1+L)² |
+|---|---|---|---|
+| 0.5 | 0.30 | 1.30 | 1.69× |
+| 1.0 | 0.60 | 1.60 | 2.56× |
+| 2.0 | 1.20 | 2.20 | 4.84× |
+| 3.0 | 1.80 | 2.80 | 7.84× |
+| 5.0 | 3.00 | 4.00 | 16.00× |
+
+**Caveat về Lipschitz analysis:** True Lipschitz constant của normalize step `combined / ‖combined‖` không bounded tại origin (`‖combined‖ → 0` → derivative → ∞). Bound trên dùng "effective" Lipschitz dựa trên worst-case absolute difference `2·σ_strat` chia max `‖g-g'‖ = C`. Đây là bound chặt cho practical purposes nhưng formally cần proof Lipschitz trong paper-quality DP analysis (e.g., guard `‖g‖ ≥ δ_min` để bound denominator).
+
+**Implementation status (sau Bug #9 fix):** `accountant.step()` pass `effective_mult = σ_DP/C_total` (KHÔNG phải `σ_DP/C`) → Opacus tính RDP với sensitivity = C_total → **ε reported đã RIGOROUS, include Lipschitz inflation**. Không cần manual correction khi publish.
+
+```python
+# simulator.py phase 4
+z = sigma_for_acct / C
+L_strat = 2.0 * beta_strat * z
+C_total = C * (1.0 + L_strat)
+effective_mult = sigma_for_acct / C_total
+```
+
+**Trước Bug #9 fix** (legacy doc-only): pass `effective_mult = σ_DP/C` → ε loose → manual correction `ε_rigorous = ε_reported · (1 + L_strat)²` cần thiết khi publish. Logic này bị remove sau auto-inflate.
 
 ---
 
@@ -208,6 +255,50 @@ Lý do dùng `σ_DP` scheduler trực tiếp: sau Bug #7 fix, cap chỉ rescale 
 |---|---|
 | Round 1: ε=2.65, Round 2: ε=4.12, Round 3: ε=158 (spike → break) | Round 1–5: ε linear 2.65→4.24, run đủ 50 round |
 | σ_DP crash xuống floor mid-round 3 | σ_DP smooth decay theo `e^{-κt}` |
+
+### Bug #9 — n_strat phụ thuộc raw g → sensitivity inflation (đã fix via auto-inflate accountant)
+
+**Issue:** `n_strat` depends on raw `g` (n_attack, n_orth, n_spec đều là hàm của g) → output `Y = g + n_DP + n_strat(g)` violate Gaussian Mechanism independence assumption.
+
+Cụ thể trong [mechanism.py:226-249](mechanism.py#L226-L249):
+- `n_attack = α(1-trust(g, g_prev))(g - g_prev)` — phụ thuộc g
+- `n_orth = z - (z·g/‖g‖²)g` — projection direction phụ thuộc g
+- `n_spec` = SVD của reshape(g) — phụ thuộc g
+
+**Lipschitz quantification:**
+- Sau normalize, `‖n_strat(g)‖ = σ_strat = β_strat·σ_DP` fixed magnitude.
+- Worst-case `‖n_strat(g) - n_strat(g')‖ ≤ 2·σ_strat` (direction flip).
+- Effective Lipschitz `L_strat = 2·σ_strat / C = 2·β_strat·z` (với `z=σ_DP/C`).
+- Sensitivity inflation: `C_total = C·(1 + L_strat) = C·(1 + 2β·z)`.
+- RDP bound thật: `α·C_total²/(2·σ_DP²)`; inflation factor = `(1 + L_strat)²`.
+
+**Trước fix:** outer accountant nhận `effective_mult = σ_DP/C` → Opacus tính RDP với sensitivity = C → ε reported là LOOSE (under-estimates true ε).
+
+**Sau fix (auto-inflate Option A'):** outer accountant nhận `effective_mult = σ_DP/C_total` → Opacus tính RDP với sensitivity = C_total → ε reported là RIGOROUS, đã include Lipschitz inflation:
+
+```python
+# simulator.py phase 4
+z = sigma_for_acct / C
+L_strat = 2.0 * self.ng.beta_strat * z
+C_total = C * (1.0 + L_strat)
+effective_mult = max(sigma_for_acct / (C_total + 1e-12), 0.01)
+```
+
+**Math verify**: `RDP_α ≈ α / (2 · noise_mult²)`. Với `noise_mult = σ/C_total = z/(1+L)`, ta có `RDP_α = α·(1+L)²/(2·z²) = α·C_total²/(2σ²)` ← bound chính xác.
+
+**Tác động** (β=0.3, z=1, default config):
+| | Trước fix | Sau fix |
+|---|---|---|
+| effective_mult | σ/C = 1.0 | σ/C_total = 0.625 |
+| RDP per step | ∝ 1/1.0² = 1.0 | ∝ 1/0.625² = 2.56 |
+| ε per round | ε_loose | 2.56× ε_loose = ε_rigorous |
+| Manual correction needed? | YES (multiply by (1+L)²) | NO (auto) |
+
+**Lý do KHÔNG fix bằng Option B post-processing:** compute `n_strat` từ `Y = g + n_DP` thay vì raw `g` sẽ destroy robustness signal khi noise heavy: `Y` có SNR `~ 1/(z·√D)`, attack direction signal indistinguishable from noise → `n_strat` mất tác dụng defensive. Default config (z=1, D=25K) cho SNR ≈ 0.6% → Layer 3 hoàn toàn vô hiệu. Auto-inflate (Option A') giữ utility, just inflates accountant ε rigorously.
+
+**Caveat về Lipschitz**: True Lipschitz unbounded tại origin (normalize step). Bound dùng "effective" `L = 2σ_strat/C` dựa trên max gradient distance `‖g-g'‖ ≤ C`. Paper-quality cần proof Lipschitz formal (e.g., guard `‖g‖ ≥ δ_min` để bound denominator) — out of scope hiện tại.
+
+**Ref:** [simulator.py phase 4](simulator.py), §4.1 bảng inflation.
 
 ### Bug #8 — σ_floor dùng Dwork-Roth bound (chỉ valid ε ≤ 1) (đã fix)
 
@@ -273,7 +364,7 @@ else:
 | Bug #3 fix (post-cap σ) cần thiết để compensate | Bug #3 superseded — không cần proxy nữa |
 | Cap là hard cap cho TỔNG energy | Cap là cap cho `n_strat` only; n_DP có thể alone exceed nhưng Gaussian concentration làm rare khi σ_DP ≤ σ_total |
 
-**Caveat về `n_strat` privacy**: Strict speaking, `n_strat` phụ thuộc vào `g` (raw gradient) — không phải post-processing thuần của `Y = g + n_DP`. Privacy analysis rigorous yêu cầu Lipschitz bound trên `n_strat(g)`. Hiện tại noise_game treat `n_strat` làm robustness mechanism, không claim privacy cost từ nó (consistent với design philosophy). Strict DP theorem phải document caveat này.
+**Caveat về `n_strat` privacy**: Strict speaking, `n_strat` phụ thuộc vào `g` (raw gradient) — không phải post-processing thuần của `Y = g + n_DP`. **Đã fix qua Bug #9 auto-inflate**: accountant nhận `C_total = C·(1 + L_strat)` thay vì `C` → ε reported tự rigorous (không cần manual correction). Xem Bug #9 + §4.1 chi tiết.
 
 ### Bug #6 — Client sampling_rate compose với batch q (đã fix)
 
@@ -323,25 +414,24 @@ Với `D = param_dim` chiều, công thức quan trọng:
 ```math
 \text{NSR}_{\text{design}} = \frac{\sigma_{\text{total}} \cdot \sqrt{D}}{C}
 \qquad
-\sigma_{\text{floor}} = \frac{C\sqrt{2\ln(1.25/\delta)}}{\varepsilon_{\max}}
+\sigma_{\text{floor}} = \mathrm{AnalyticGaussian}(\varepsilon_{\max}, \delta, C)
 ```
 
-Để `σ_floor < σ_total` (floor không nuốt scheduler):
+`σ_floor` solve numerical Balle-Wang 2018 (Bug #8 fix) — xem [`analytic_gaussian_sigma()`](mechanism.py). Trước đây dùng Dwork-Roth `σ_floor = C·√(2·ln(1.25/δ))/ε_max` chỉ valid với ε ≤ 1.
 
-```math
-\varepsilon_{\max} \ge \frac{\sqrt D \cdot \sqrt{2\ln(1.25/\delta)}}{\text{NSR}_{\text{design}}}
-```
+**Bảng tra σ_floor (Balle-Wang)** với `C=1, δ=1e-5`:
 
-**Bảng tra cho MNIST MLP** (D=79510, C=1, δ=1e-5):
+| ε_max | σ_floor | NSR_min (D=25K MNIST hidden=32) | NSR_min (D=80K MNIST hidden=100) |
+|---|---|---|---|
+| 10 | 0.50 | 79.7 | 141.7 |
+| 50 | 0.150 | 23.9 | 42.5 |
+| 100 | 0.095 | 15.1 | 26.9 |
+| 200 | 0.062 | 9.8 | 17.5 |
+| 500 | 0.036 | 5.7 | 10.2 |
 
-| NSR_design target | sigma_total | epsilon_max tối thiểu |
-|---|---|---|
-| 100 | 0.354 | 14 |
-| 141 (≈√D·z=0.5) | 0.5 | 10 |
-| 200 | 0.71 | 7 |
-| 282 (z=1.0) | 1.0 | 5 |
+**Để `σ_floor < σ_total`** (floor không nuốt scheduler): chọn `ε_max` đủ lớn theo bảng trên cho NSR_design mong muốn.
 
-**Lưu ý quan trọng:** `noise_mult z = σ/C ≥ 0.5` để Opacus SGM bound không nổ. Suy ra `NSR_design ≥ 0.5 · √D / 1 ≈ 141` cho MNIST. **Không thể tới NSR=15 với D lớn** mà vẫn giữ privacy có ý nghĩa.
+**Lưu ý sau Bug #9 fix:** accountant pass `effective_mult = σ_DP/C_total` với `C_total = C·(1 + 2β·z)`. Practical floor: `effective_mult ≥ 0.01` (Opacus guard) → `σ_DP ≥ 0.01·C_total`. Với β=0.3, z lớn → C_total lớn → cho phép σ_DP nhỏ hơn so với pre-Bug#9. **Không còn ràng buộc `z ≥ 0.5` cứng** vì auto-inflate đã handle.
 
 ### 6.3 Sample configs
 
@@ -386,6 +476,7 @@ noise_game:
 4. **Tinh chỉnh `lr`** (thường 5–10× DP-SGD baseline) để gradient grow nhanh, observed NSR rớt.
 5. **Tune robust** (`alpha_attack`, `beta_strat`) nếu có attack.
 6. **Verify** end-to-end: ε linear theo round, acc tăng đều, NSR observed giảm dần.
+7. **ε rigorous tự động (sau Bug #9 fix):** simulator.py auto-inflate accountant qua C_total = C·(1+L_strat) → `ε_reported` ĐÃ là rigorous, không cần manual correction khi publish. Verify `ε_reported ≤ epsilon_max` trực tiếp. Lưu ý: với β_strat=0.3, z=1 default → ε_reported giờ ~2.56× cao hơn so với pre-fix → tăng `epsilon_max` config nếu cần run nhiều rounds, hoặc giảm `β_strat` để giảm L_strat.
 
 ---
 
@@ -441,11 +532,11 @@ python run.py --algorithm noise-game config/fast-experiment/mnist/noise_game.yam
 ```
 
 Healthy run signature:
-- ε **linear** theo round (∆ε ≈ 0.4–0.8 per round với MNIST default).
+- ε **linear** theo round (∆ε ≈ 1–3 per round với MNIST default sau Bug #9 auto-inflate; pre-Bug#9 ≈ 0.4–0.8).
 - `avg_sigma_dp_precap` decay smooth theo $e^{-\kappa t}$.
-- `avg_n_dp_norm_postcap ≈ σ_DP · √D` (cap inactive trong điều kiện thường).
+- `avg_n_dp_norm_postcap ≈ σ_DP · √D` (Bug #7: cap không rescale n_DP, postcap == precap).
 - Acc tăng đều, không oscillate dưới noise dominant.
-- Run hoàn thành đủ `n_rounds`, không break do budget.
+- Run hoàn thành đủ `n_rounds`, không break do budget (cần `epsilon_max` đủ lớn — xem §6.2 bảng tra).
 
 ---
 

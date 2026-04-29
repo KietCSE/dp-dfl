@@ -106,7 +106,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 extra_node[nid] = {
                     "trust": metrics["trust"],
                     "noise_norm": metrics["total_noise_norm"],
-                    "n_dp_norm": metrics["n_dp_norm"],   # POST-cap (used for ε)
+                    "n_dp_norm": metrics["n_dp_norm"],   # diagnostic (Bug #7: postcap==precap)
                     "nsr": metrics["nsr"],
                     "sigma_dp": metrics["sigma_dp"],
                 }
@@ -150,16 +150,12 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 
             # Phase 4: Privacy accounting
-            # After Bug #7 fix in mechanism._enforce_budget(): n_DP is left
-            # untouched by the budget cap (only n_strat gets rescaled). n_DP
-            # therefore remains pure Gaussian N(0, σ_DP²·I) — Gaussian Mechanism
-            # guarantee applies exactly with σ = σ_DP from the scheduler. Use
-            # σ_DP directly as the noise multiplier; no need for the post-cap
-            # σ_eff = ‖n_dp_post‖/√D proxy that was required when n_DP was
-            # rescaled (which broke its Gaussian property — see Bug #7 in REPORT).
-            #
-            # Bug #6 fix retained: compose client-level Poisson sub-sampling
-            # with batch sub-sampling: q_composed = q_client · q_batch.
+            # After Bug #7 fix: n_DP is pure Gaussian N(0, σ_DP²·I).
+            # After Bug #9 fix: account for n_strat dependency on g via
+            # Lipschitz-inflated sensitivity C_total = C·(1 + L_strat),
+            # L_strat = 2·β_strat·z, z = σ_DP/C. This makes ε reported
+            # rigorous (no manual inflation correction needed at publish).
+            # Bug #6 fix retained: q_composed = q_client · q_batch.
             avg_sigma_dp = (float(np.mean(list(sigma_dps.values())))
                             if sigma_dps else 0.0)
             epsilon = 0.0
@@ -170,11 +166,15 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     self.config.topology.n_attackers].n_samples
                 q_client = max(min(float(self.config.dp.sampling_rate), 1.0), 0.0)
                 q_composed = q_client * q_batch
-                # σ_DP from scheduler is the actual std of the Gaussian noise
-                # injected (no post-cap rescaling). Floor at 0.01·C to guard
-                # Opacus against near-zero noise multiplier.
-                sigma_for_acct = avg_sigma_dp if avg_sigma_dp > 0 else self.game_mechanism._sigma_floor
-                effective_mult = max(sigma_for_acct / (C + 1e-12), 0.01)
+                sigma_for_acct = (avg_sigma_dp if avg_sigma_dp > 0
+                                  else self.game_mechanism._sigma_floor)
+                # Bug #9 fix (Lipschitz inflation): pass C_total instead of C
+                # to Opacus so RDP_α = α·C_total²/(2σ²) — rigorous bound that
+                # accounts for n_strat(g) dependency on raw gradient.
+                z = sigma_for_acct / max(C, 1e-12)
+                L_strat = 2.0 * self.ng.beta_strat * z
+                C_total = C * (1.0 + L_strat)
+                effective_mult = max(sigma_for_acct / (C_total + 1e-12), 0.01)
                 self.accountant.step(honest_steps, q_composed, effective_mult)
                 epsilon = self.accountant.get_epsilon()
 

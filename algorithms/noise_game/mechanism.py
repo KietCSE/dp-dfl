@@ -288,6 +288,18 @@ class NoiseGameMechanism:
         """Full 4-layer noise pipeline.
 
         Returns (total_noise, metrics_dict).
+
+        Privacy note (Bug #9 fix — Lipschitz inflation auto-applied):
+        n_strat depends on raw `gradient` (via directional, orthogonal, spectrum
+        noise components) → output Y = g + n_DP + n_strat(g) is NOT a pure
+        Gaussian Mechanism with sensitivity C; effective sensitivity is
+
+            C_total = C · (1 + L_strat),  L_strat = 2·β_strat·z,  z = σ_DP/C
+
+        The simulator's accountant.step() automatically passes effective_mult
+        = σ_DP/C_total (instead of σ_DP/C) so Opacus reports rigorous ε
+        already including the (1 + L_strat)² inflation. No manual correction
+        needed at publish time. See REPORT.md §4.1 + Bug #9.
         """
         # Trust + attack signal
         trust = self.compute_trust(gradient, prev_gradient)
