@@ -36,9 +36,9 @@ trong đó $g_t$ là gradient sau clipping, $n_{DP,t}$ là Gaussian DP noise, $n
 |---|---|---|
 | L2 clipping | $g_t \leftarrow g_t / \max(1, \\|g_t\\|/C)$ | [simulator.py:55–58](simulator.py#L55-L58) |
 | Gaussian DP noise | $n_{DP,t} \sim \mathcal{N}(0, \sigma_{DP,t}^2 I)$ | [mechanism.py:91–94](mechanism.py#L91-L94) |
-| Sigma floor | $\sigma_{DP,t} \ge \dfrac{C\sqrt{2\ln(1.25/\delta)}}{\varepsilon_{\max}}$ | [mechanism.py:45–47](mechanism.py#L45-L47) |
+| Sigma floor (Balle-Wang 2018) | $\sigma_{\text{floor}} = \mathrm{AnalyticGaussian}(\varepsilon_{\max}, \delta, C)$, solve numerical: $\Phi\!\left(\tfrac{C}{2\sigma} - \tfrac{\varepsilon\sigma}{C}\right) - e^{\varepsilon}\Phi\!\left(-\tfrac{C}{2\sigma} - \tfrac{\varepsilon\sigma}{C}\right) = \delta$ | [mechanism.py:`analytic_gaussian_sigma`](mechanism.py) |
 
-Floor đảm bảo guarantee $(\varepsilon_{\max}, \delta)$-DP độc lập với scheduler.
+Floor đảm bảo guarantee single-round $(\varepsilon_{\max}, \delta)$-DP cho mọi $\varepsilon > 0$ (Bug #8 fix). Trước đây dùng Dwork-Roth bound chỉ valid với $\varepsilon \in (0, 1)$ → invalid trong default regime $\varepsilon_{\max}=50$.
 
 ### Layer 2 — RDP-based Adaptive Control
 
@@ -120,7 +120,11 @@ n_{\text{strat},t} = \sigma_{\text{strat},t} \cdot \hat n_t
 ```
 
 - **Quan trọng:** `sigma_total` = **per-dimension std cap**, không phải L2-norm tuyệt đối. Cap thực tế = $\sigma_{\text{total}}^2 \cdot D$.
-- Khi vượt: cả `n_DP` và `n_strat` được rescale tỷ lệ về cap ([mechanism.py:160–176](mechanism.py#L160-L176)).
+- Khi vượt: **chỉ `n_strat`** được rescale; `n_DP` giữ nguyên Gaussian thuần (Bug #7 fix). Logic mới ở [mechanism.py:_enforce_budget](mechanism.py):
+  - `budget_remain = cap - ‖n_DP‖²`
+  - Nếu `budget_remain ≤ 0` → `n_strat = 0` (rare khi σ_DP ≤ σ_total).
+  - Ngược lại → scale n_strat về `‖n_strat‖² ≤ budget_remain`.
+- Lý do thiết kế: rescale n_DP bằng factor random phụ thuộc cả `n_DP` lẫn `n_strat` phá vỡ distribution Gaussian → mất Gaussian Mechanism guarantee. Giữ n_DP thuần Gaussian → privacy guarantee exact (xem Bug #7 §5).
 - Aligned với `sigma_0` (cũng là per-dim std).
 
 ### NSR monitoring
@@ -144,16 +148,17 @@ Hệ dùng **2 RDP counter độc lập** với mục đích khác nhau:
 | **Internal** (`mechanism.rdp_spent`) | Heuristic cho adaptive scheduler quyết định `σ_DP,t` | 1 lần/round qua `commit_round_rdp(avg_σ_dp)` | [mechanism.py:21–32](mechanism.py#L21-L32), [simulator.py:115–120](simulator.py#L115-L120) |
 | **Outer** (`RenyiAccountant`) | Privacy auditing chính thức (Opacus SGM tight bound) | 1 lần/round qua `accountant.step()` | [renyi_accountant.py](../../core/renyi_accountant.py), [simulator.py:152–167](simulator.py#L152-L167) |
 
-### Outer accountant dùng POST-cap σ
+### Outer accountant dùng σ_DP scheduler (sau Bug #7 fix)
 
 ```python
-avg_n_dp_norm = mean([e["n_dp_norm"] for e in extra_node.values()])  # POST-cap
-sigma_eff      = avg_n_dp_norm / sqrt(param_dim)
-effective_mult = max(sigma_eff / C, 0.01)
-accountant.step(honest_steps, q_batch, effective_mult)
+avg_sigma_dp   = mean(sigma_dps.values())   # scheduler output, pre-cap
+effective_mult = max(avg_sigma_dp / C, 0.01)
+accountant.step(honest_steps, q_composed, effective_mult)
 ```
 
-Không dùng pre-cap `σ_DP` từ scheduler vì cap có thể rescale `n_dp` → privacy thực phụ thuộc vào noise sau cap, không phải scheduler output.
+Lý do dùng `σ_DP` scheduler trực tiếp: sau Bug #7 fix, cap chỉ rescale `n_strat` → `n_DP` giữ nguyên distribution Gaussian thuần `N(0, σ_DP²·I)` → Gaussian Mechanism guarantee `RDP_α = α·C²/(2σ_DP²)` apply exact với `σ = σ_DP` từ scheduler.
+
+**Trước Bug #7 fix** (legacy): cap rescale CẢ `n_DP` → distribution không còn Gaussian → phải dùng proxy `σ_eff = ‖n_dp_post‖/√D` (sample-based estimate, conservative heuristic, không rigorous).
 
 ---
 
@@ -165,11 +170,15 @@ Không dùng pre-cap `σ_DP` từ scheduler vì cap có thể rescale `n_dp` →
 **Sau:** dùng Mironov 2017 Theorem 8: $\varepsilon = \text{RDP}_\alpha + \ln(1/\delta)/(\alpha-1)$ trước khi compare.
 **Ref:** [mechanism.py:62–72](mechanism.py#L62-L72)
 
-### Bug #3 — Post-cap σ cho accounting (đã fix)
+### Bug #3 — Post-cap σ cho accounting (đã fix → superseded bởi Bug #7)
 
-**Trước:** outer accountant nhận pre-cap `σ_DP` → khi cap kích hoạt, privacy bị under-report ~10000×.
-**Sau:** dùng `avg(n_dp_norm)/√D` (post-cap σ_eff) làm input cho accountant.
-**Ref:** [simulator.py:146–167](simulator.py#L146-L167)
+**Trước:** outer accountant nhận pre-cap `σ_DP` → khi cap kích hoạt, privacy bị under-report ~10000× (vì cap rescale n_DP làm noise thực inject nhỏ hơn σ_DP scheduler).
+
+**Fix tạm:** dùng `avg(n_dp_norm)/√D` (post-cap σ_eff) làm input cho accountant — sample-based proxy, conservative.
+
+**SUPERSEDED bởi Bug #7 fix:** sau khi cap chỉ rescale n_strat (giữ n_DP Gaussian thuần), accountant dùng `σ_DP` scheduler trực tiếp — rigorous, không cần proxy. Logic `σ_eff = ‖n_dp_post‖/√D` đã bị remove.
+
+**Ref:** [simulator.py phase 4](simulator.py), [Bug #7 §dưới](#bug-7--cap-rescale-phá-vỡ-gaussian-distribution-của-n_dp-đã-fix)
 
 ### Bug #4 — Energy cap scale theo √D (đã fix)
 
@@ -199,6 +208,72 @@ Không dùng pre-cap `σ_DP` từ scheduler vì cap có thể rescale `n_dp` →
 |---|---|
 | Round 1: ε=2.65, Round 2: ε=4.12, Round 3: ε=158 (spike → break) | Round 1–5: ε linear 2.65→4.24, run đủ 50 round |
 | σ_DP crash xuống floor mid-round 3 | σ_DP smooth decay theo `e^{-κt}` |
+
+### Bug #8 — σ_floor dùng Dwork-Roth bound (chỉ valid ε ≤ 1) (đã fix)
+
+**Trước:** floor formula
+$$\sigma_{\text{floor}} = \frac{C \sqrt{2\ln(1.25/\delta)}}{\varepsilon_{\max}}$$
+là **Dwork-Roth Gaussian Mechanism bound** (Dwork-McSherry-Nissim-Smith 2006, Dwork-Roth 2014 Theorem 3.22). Proof của bound dùng Taylor truncation `e^t ≤ 1+t+t²/2+...` yêu cầu `|t| ≤ 1` → chỉ valid với $\varepsilon \in (0, 1)$.
+
+Default config `epsilon_max = 50` nằm ngoài regime valid → formula UNDER-estimates required σ. Verify số: với `ε=50, δ=1e-5, C=1`:
+
+| Method | σ_floor |
+|---|---|
+| Dwork-Roth (cũ) | 0.0969 (invalid theoretically) |
+| Balle-Wang 2018 (mới) | **0.1498** (~1.54× lớn hơn, tight) |
+
+Hệ quả: scheduler có thể pick σ = 0.097 ở late rounds (chạm floor) nhưng floor đó không thực sự đảm bảo (50, 1e-5)-DP per round → outer Opacus accountant track ε grow nhanh hơn → freeze node sớm hơn lý thuyết.
+
+**Sau:** Balle-Wang 2018 analytic Gaussian Mechanism (tight cho mọi ε > 0):
+$$\Phi\!\left(\frac{\Delta}{2\sigma} - \frac{\varepsilon\sigma}{\Delta}\right) - e^{\varepsilon} \cdot \Phi\!\left(-\frac{\Delta}{2\sigma} - \frac{\varepsilon\sigma}{\Delta}\right) = \delta$$
+
+Solve numerical qua bisection (`scipy.optimize.brentq`). Implementation [`analytic_gaussian_sigma()`](mechanism.py) ở module-level mechanism.
+
+**Ref:** [mechanism.py:`analytic_gaussian_sigma`](mechanism.py); [Balle-Wang 2018 paper](https://arxiv.org/abs/1805.06530)
+
+**Tác động:**
+- ✓ Floor formula valid cho mọi ε > 0 → theoretical foundation đúng.
+- ✓ Floor lớn hơn (~1.54× ở ε=50) → scheduler floor inject nhiều noise hơn ở late rounds → ε grow chậm hơn → có thể chạy nhiều rounds hơn trước khi freeze.
+- Privacy claim cuối cùng KHÔNG đổi (outer Opacus accountant đã track đúng từ đầu); chỉ fix theoretical foundation của floor.
+- **Trade-off shift**: late-round noise mạnh hơn → utility (accuracy) có thể giảm chút ở regime budget-tight, đổi lại privacy-utility curve align với DP literature đúng.
+
+**Verification** (3 numerical tests pass):
+- ε=1: Balle-Wang 3.73 < Dwork-Roth 4.84 (BW tighter when both valid)
+- ε=50: Balle-Wang 0.15 > Dwork-Roth 0.097 (DR under-estimates)
+- Plug σ_BW back vào formula → residual 1e-14 (solver converged to machine precision)
+
+### Bug #7 — Cap rescale phá vỡ Gaussian distribution của n_DP (đã fix)
+
+**Trước:** `_enforce_budget()` rescale CẢ `n_DP` lẫn `n_strat` bằng cùng `factor = √(cap/energy)` khi vượt budget. Vấn đề:
+- `n_DP` ban đầu ~ $\mathcal{N}(0, \sigma_{DP}^2 I)$ — Gaussian thuần.
+- `factor` phụ thuộc vào cả `‖n_DP‖²` lẫn `‖n_strat‖²` → random.
+- `n_DP_post = n_DP · factor` → distribution KHÔNG còn là Gaussian (mixture phụ thuộc joint distribution).
+- Gaussian Mechanism RDP `α·C²/(2σ²)` (Mironov 2017) **không apply được** với non-Gaussian noise.
+- Workaround `σ_eff = ‖n_dp_post‖/√D` chỉ là sample-based estimate, conservative heuristic, **không rigorous**.
+
+**Sau:** chỉ rescale `n_strat`, `n_DP` luôn được giữ nguyên Gaussian thuần.
+
+```python
+budget_remain = cap - ‖n_DP‖²
+if budget_remain ≤ 0:        # n_DP alone fills budget (rare)
+    n_strat = 0
+elif ‖n_strat‖² ≤ budget_remain:
+    pass                      # already fits
+else:
+    n_strat *= √(budget_remain / ‖n_strat‖²)
+```
+
+**Ref:** [mechanism.py:_enforce_budget](mechanism.py), [simulator.py phase 4](simulator.py)
+
+**Tác động:**
+| Trước fix | Sau fix |
+|---|---|
+| n_DP_post là mixture non-Gaussian → DP claim heuristic | n_DP thuần Gaussian → DP guarantee rigorous |
+| Outer accountant nhận `σ_eff = ‖n_dp_post‖/√D` (sample) | Accountant nhận `σ_DP` (scheduler output, distribution param) |
+| Bug #3 fix (post-cap σ) cần thiết để compensate | Bug #3 superseded — không cần proxy nữa |
+| Cap là hard cap cho TỔNG energy | Cap là cap cho `n_strat` only; n_DP có thể alone exceed nhưng Gaussian concentration làm rare khi σ_DP ≤ σ_total |
+
+**Caveat về `n_strat` privacy**: Strict speaking, `n_strat` phụ thuộc vào `g` (raw gradient) — không phải post-processing thuần của `Y = g + n_DP`. Privacy analysis rigorous yêu cầu Lipschitz bound trên `n_strat(g)`. Hiện tại noise_game treat `n_strat` làm robustness mechanism, không claim privacy cost từ nó (consistent với design philosophy). Strict DP theorem phải document caveat này.
 
 ### Bug #6 — Client sampling_rate compose với batch q (đã fix)
 

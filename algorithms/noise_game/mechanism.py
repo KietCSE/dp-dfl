@@ -11,6 +11,49 @@ from typing import Dict, Tuple
 
 import torch
 import torch.nn.functional as F
+from scipy.optimize import brentq
+from scipy.stats import norm
+
+
+def analytic_gaussian_sigma(epsilon: float, delta: float,
+                            sensitivity: float) -> float:
+    """Balle-Wang 2018 analytic Gaussian Mechanism — tight σ for any ε > 0.
+
+    Solves the (ε, δ)-DP boundary condition (Balle-Wang 2018 Theorem 9):
+
+        Φ(Δ/(2σ) - εσ/Δ) - e^ε · Φ(-Δ/(2σ) - εσ/Δ) = δ
+
+    where Φ is the standard normal CDF and Δ is the L2 sensitivity.
+
+    Unlike the classical Dwork-Roth bound σ ≥ C·√(2·ln(1.25/δ))/ε which is
+    only valid for ε ∈ (0, 1) (proof uses Taylor truncation requiring |ε| ≤ 1),
+    this formula gives the tight σ for any ε > 0.
+
+    Returns the smallest σ such that the Gaussian Mechanism is (ε, δ)-DP.
+    Solved numerically via bisection (scipy.optimize.brentq).
+    """
+    if epsilon <= 0 or delta <= 0 or delta >= 1 or sensitivity <= 0:
+        raise ValueError(f"Need ε > 0, 0 < δ < 1, sensitivity > 0; "
+                         f"got ε={epsilon}, δ={delta}, Δ={sensitivity}")
+    # Clamp ε to avoid math.exp overflow at extreme values (Inf · 0 → NaN).
+    # Practical DP regime never needs ε > 100; this guard protects numerical
+    # stability without affecting realistic configs.
+    eps = min(float(epsilon), 700.0)
+
+    def boundary(sigma: float) -> float:
+        # f(σ) = δ - [Φ(a) - e^ε · Φ(b)]
+        # σ tiny → f < 0 (privacy violated, RHS large)
+        # σ large → f → δ > 0 (privacy slack, RHS → 0)
+        # Find smallest σ where f(σ) = 0.
+        a = sensitivity / (2.0 * sigma) - eps * sigma / sensitivity
+        b = -sensitivity / (2.0 * sigma) - eps * sigma / sensitivity
+        return delta - (norm.cdf(a) - math.exp(eps) * norm.cdf(b))
+
+    lo, hi = sensitivity * 1e-6, sensitivity * 1e3
+    # Expand upper bracket if needed (very small ε requires very large σ)
+    while boundary(hi) < 0 and hi < 1e12:
+        hi *= 10.0
+    return float(brentq(boundary, lo, hi, xtol=1e-9))
 
 
 class NoiseGameMechanism:
@@ -46,9 +89,16 @@ class NoiseGameMechanism:
         # NOTE (Bug #2 fix): this is RDP_α, NOT (ε, δ)-DP epsilon. Use
         # compute_eps_dp() to convert before comparing against epsilon_max.
         self.rdp_spent = 0.0
-        # DP sigma floor: minimum sigma for (eps_max, delta)-DP
-        self._sigma_floor = clip_bound * math.sqrt(
-            2.0 * math.log(1.25 / delta)) / epsilon_max
+        # DP sigma floor: minimum σ s.t. single-round Gaussian Mechanism is
+        # (ε_max, δ)-DP. Use Balle-Wang 2018 analytic Gaussian (tight for any
+        # ε > 0). Replaces the Dwork-Roth bound σ ≥ C·√(2·ln(1.25/δ))/ε which
+        # is only valid for ε ∈ (0, 1) and under-estimates required σ at the
+        # default epsilon_max=50 regime (Bug #8 fix).
+        self._sigma_floor = analytic_gaussian_sigma(
+            epsilon=float(epsilon_max),
+            delta=float(delta),
+            sensitivity=float(clip_bound),
+        )
         self._gen: "torch.Generator | None" = None
 
     def set_generator(self, gen: "torch.Generator"):
@@ -195,19 +245,39 @@ class NoiseGameMechanism:
 
     def _enforce_budget(self, n_dp: torch.Tensor,
                         n_strat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Scale both noises proportionally if total energy exceeds cap.
+        """Scale ONLY n_strat to fit remaining budget after n_DP (Bug #7 fix).
 
         Cap = (sigma_total)^2 * D — interprets sigma_total as per-dimension
         std cap (same unit as sigma_0). Without the D factor the cap is an
         absolute L2-norm threshold, which forces sigma_eff_post ≈ sigma_total/√D
         and inflates the privacy cost by ~D× when D is large.
+
+        Bug #7 fix (Option A): n_DP is left UNTOUCHED to preserve its Gaussian
+        distribution N(0, σ_DP²·I). Rescaling n_DP by a factor that depends on
+        ‖n_DP‖² + ‖n_strat‖² destroys the Gaussian property — the post-cap n_DP
+        becomes a complex mixture, breaking the Gaussian Mechanism privacy
+        guarantee (Mironov 2017 RDP_α = α·C²/(2σ²) requires fixed-σ Gaussian).
+
+        New cap logic:
+          - budget_remain = cap - ‖n_DP‖²
+          - if budget_remain ≤ 0 (n_DP alone fills budget) → n_strat = 0
+          - else → scale n_strat to ‖n_strat‖² ≤ budget_remain (no-op if already fits)
+          - n_DP always returned as-is
+
+        Trade-off: occasionally ‖n_DP‖² > cap (rare with Gaussian concentration
+        when σ_DP ≤ σ_total) → total noise exceeds cap. Acceptable — privacy
+        guarantee from n_DP alone is exact; n_strat for robustness only.
         """
-        energy = n_dp.norm() ** 2 + n_strat.norm() ** 2
         cap = (self.sigma_total ** 2) * self.param_dim
-        if energy > cap and energy > 1e-12:
-            factor = math.sqrt(cap / energy.item())
-            return n_dp * factor, n_strat * factor
-        return n_dp, n_strat
+        n_dp_energy = n_dp.norm().item() ** 2
+        budget_remain = cap - n_dp_energy
+        if budget_remain <= 0.0:
+            return n_dp, torch.zeros_like(n_strat)
+        n_strat_energy = n_strat.norm().item() ** 2
+        if n_strat_energy <= budget_remain or n_strat_energy < 1e-12:
+            return n_dp, n_strat
+        factor_strat = math.sqrt(budget_remain / n_strat_energy)
+        return n_dp, n_strat * factor_strat
 
     # -- Full pipeline --
 

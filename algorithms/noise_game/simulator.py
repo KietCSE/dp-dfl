@@ -1,7 +1,6 @@
 """Noise-game DFL simulator: orchestrates the full strategic noise algorithm."""
 
 import logging
-import math
 
 import numpy as np
 import torch
@@ -150,37 +149,34 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 
-            # Phase 4: Privacy accounting (Bug #3 fix — see audit report)
-            # Use POST-cap DP noise norm: budget enforcer scales n_dp by `factor`
-            # so the actual injected DP noise has σ_eff = ‖n_dp_post‖ / √D.
-            # Pre-cap σ_dp (the scheduler output) under-states real noise after
-            # the σ_total² cap kicks in, leading to ~10,000× ε under-reporting.
+            # Phase 4: Privacy accounting
+            # After Bug #7 fix in mechanism._enforce_budget(): n_DP is left
+            # untouched by the budget cap (only n_strat gets rescaled). n_DP
+            # therefore remains pure Gaussian N(0, σ_DP²·I) — Gaussian Mechanism
+            # guarantee applies exactly with σ = σ_DP from the scheduler. Use
+            # σ_DP directly as the noise multiplier; no need for the post-cap
+            # σ_eff = ‖n_dp_post‖/√D proxy that was required when n_DP was
+            # rescaled (which broke its Gaussian property — see Bug #7 in REPORT).
+            #
+            # Bug #6 fix retained: compose client-level Poisson sub-sampling
+            # with batch sub-sampling: q_composed = q_client · q_batch.
+            avg_sigma_dp = (float(np.mean(list(sigma_dps.values())))
+                            if sigma_dps else 0.0)
             epsilon = 0.0
             if self.accountant is not None:
                 honest_steps = next(
                     s for nid, s in all_steps.items() if nid not in self.attacker_ids)
                 q_batch = self.config.training.batch_size / self.nodes[
                     self.config.topology.n_attackers].n_samples
-                # Compose with client-level Poisson sub-sampling for privacy
-                # amplification (Bug #6 fix). For item-level DP, P[record sampled]
-                # = q_client · q_batch (independent Poisson layers).
                 q_client = max(min(float(self.config.dp.sampling_rate), 1.0), 0.0)
                 q_composed = q_client * q_batch
-                post_cap_dp_norms = [
-                    e["n_dp_norm"] for e in extra_node.values()
-                    if "n_dp_norm" in e]
-                if post_cap_dp_norms:
-                    avg_n_dp_norm = float(np.mean(post_cap_dp_norms))
-                    sigma_eff = avg_n_dp_norm / math.sqrt(max(self.param_dim, 1))
-                    effective_mult = max(sigma_eff / (C + 1e-12), 0.01)
-                else:
-                    effective_mult = 0.01
+                # σ_DP from scheduler is the actual std of the Gaussian noise
+                # injected (no post-cap rescaling). Floor at 0.01·C to guard
+                # Opacus against near-zero noise multiplier.
+                sigma_for_acct = avg_sigma_dp if avg_sigma_dp > 0 else self.game_mechanism._sigma_floor
+                effective_mult = max(sigma_for_acct / (C + 1e-12), 0.01)
                 self.accountant.step(honest_steps, q_composed, effective_mult)
                 epsilon = self.accountant.get_epsilon()
-
-            # Pre-cap σ kept for diagnostic reporting only (not for ε).
-            avg_sigma_dp = (float(np.mean(list(sigma_dps.values())))
-                            if sigma_dps else 0.0)
 
             # Phase 5: Evaluate + log
             honest_trust = [m["trust"] for m in extra_node.values()]

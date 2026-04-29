@@ -71,7 +71,7 @@ aggregation:
 
 noise_game:
     alpha_attack: 0.1      # MNIST: giảm directional noise
-    sigma_0: 3.0           # z=1.0 → privacy multiplier có ý nghĩa
+    sigma_0: 2.0           # z=1.0 → privacy multiplier có ý nghĩa
     svd_rank: 16
     svd_reshape_k: 64
     momentum_beta: 0.9

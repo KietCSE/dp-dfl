@@ -36,12 +36,16 @@ Layer 1 chịu trách nhiệm bảo đảm privacy cơ bản. Nó giới hạn s
      ```
    - Noise này được thêm vào sau khi clipping: `\hat{g}_t = g_{bar,t} + n_{DP,t} + n_{strategic,t}`.
 
-3. Lower bound chuẩn cho sigma_DP:
-   - Với một mục tiêu `(\varepsilon, \delta)`-DP, công thức chuẩn là:
+3. Lower bound chuẩn cho sigma_DP (Balle-Wang 2018 analytic Gaussian — Bug #8 fix):
+   - Trước đây dùng công thức Dwork-Roth `σ ≥ C·√(2·ln(1.25/δ))/ε` — chỉ valid với `ε ∈ (0, 1)` (proof Taylor truncation).
+   - Default config dùng `epsilon_max = 50` nằm ngoài regime valid → Dwork-Roth UNDER-estimates required σ.
+   - Hiện thực hóa bằng Balle-Wang 2018 analytic Gaussian Mechanism, tight bound cho mọi `ε > 0`:
      ```math
-     \sigma_{DP,t} \ge \frac{C \sqrt{2 \ln(1.25/\delta)}}{\varepsilon}
+     \Phi\!\left(\frac{\Delta}{2\sigma} - \frac{\varepsilon\sigma}{\Delta}\right) - e^{\varepsilon} \cdot \Phi\!\left(-\frac{\Delta}{2\sigma} - \frac{\varepsilon\sigma}{\Delta}\right) = \delta
      ```
-   - Bản thực hiện giữ nguyên nguyên lý này như base floor để không giảm quá thấp sigma_DP.
+     trong đó `Φ` là CDF chuẩn `N(0,1)`, `Δ` là L2 sensitivity (= clip bound `C`).
+   - Solve numerical qua bisection (`scipy.optimize.brentq`) — implementation [`analytic_gaussian_sigma()`](../algorithms/noise_game/mechanism.py).
+   - Reference: [Balle & Wang 2018 — "Improving the Gaussian Mechanism for Differential Privacy: Analytical Calibration and Optimal Denoising"](https://arxiv.org/abs/1805.06530), Theorem 9.
 
 ### File liên quan
 
