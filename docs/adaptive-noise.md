@@ -24,9 +24,12 @@
 | $w_{n,t}$ | Model của node $n$ tại round $t$ |
 | $\Delta w_{n,t}$ | Model update raw của node $n$ tại round $t$ |
 | $\Delta \tilde{w}_{n,t}$ | Model update đã clip + noise của node $n$ |
-| $D_n$ | Dữ liệu cục bộ của node $n$ (train/validation split) |
+| $D_n$ | Dữ liệu cục bộ của node $n$, $D_n = D_n^{\text{train}} \cup D_n^{\text{val}}$ |
+| $D_n^{\text{train}}$ | Subset train cục bộ (dùng cho SGD, BƯỚC 1) |
+| $D_n^{\text{val}}$ | Subset validation cục bộ held-out, dùng cho $\mathrm{Loss}_n^t$ (BƯỚC 2) |
+| $v$ | val_ratio: $\lvert D_n^{\text{val}}\rvert / \lvert D_n\rvert$, hardcoded $v = 0.1$ |
 | $D$ | Số chiều của model |
-| $\mathrm{Loss}_n^t$ | **Loss cục bộ** của node $n$ tại round $t$ (trên tập train hoặc validation cục bộ) |
+| $\mathrm{Loss}_n^t$ | **Validation loss** của node $n$ tại round $t$ trên $D_n^{\text{val}}$ |
 | $\overline{\mathrm{Loss}}_n^t$ | EMA của loss tại node $n$ qua các round |
 | $r_n^t$ | Adaptive ratio (loss ratio) tại node $n$ tại round $t$, $\in [0, 1]$ |
 | $\gamma$ | EMA smoothing factor (khuyến nghị $\gamma = 0.9$) |
@@ -66,23 +69,28 @@ Sensitivity (user-level): Δ₂ = C
   (vì thay đổi 1 user ⟹ update khác 1 vector có norm ≤ C)
 ```
 
-### 2.2. Adaptive Signal từ Loss cục bộ
+### 2.2. Adaptive Signal từ Validation Loss cục bộ
 
-Mỗi node tự đánh giá mức độ hội tụ của bản thân thông qua **loss** trên
-dữ liệu cục bộ (train hoặc validation). KHÔNG cần tín hiệu từ hàng xóm
-→ đơn giản hơn, không phụ thuộc vào chất lượng neighbors.
+Mỗi node tự đánh giá mức độ hội tụ thông qua **validation loss** trên
+$D_n^{\text{val}}$ (subset held-out cố định, ratio $v = 0.1$, deterministic
+theo seed). KHÔNG cần tín hiệu từ hàng xóm → đơn giản, robust Non-IID.
+
+**Tại sao val (không phải train)?** Train loss giảm máy móc theo SGD bất
+kể model có generalize hay overfit → adaptive ratio $r$ luôn $< 1$ → $\sigma$
+giảm aggressive vô ích → tiêu phí privacy budget. Val loss bão hòa khi
+overfit → $r \to 1$ → $\sigma$ giữ nguyên (đúng spec mong muốn).
 
 ```
 Bước 1 — Tính Loss Ratio:
-  So sánh loss hiện tại với EMA loss quá khứ để biết mô hình đang
-  tiến bộ (loss giảm) hay bão hòa (loss ngang/tăng).
+  So sánh val loss hiện tại với EMA val loss quá khứ để biết model có
+  còn generalize tốt hơn (loss giảm) hay đã bão hòa/overfit (ngang/tăng).
 
-                    ⎛         Loss_n^t          ⎞
-    r_n^t  =  min ⎜  1,  ─────────────────────  ⎟
-                    ⎝     Loss̄_n^{t−1} + ε      ⎠
+                    ⎛       Loss_n^t(D_n^val)          ⎞
+    r_n^t  =  min ⎜  1,  ─────────────────────────────  ⎟
+                    ⎝     Loss̄_n^{t−1} + ε              ⎠
 
-  • Loss giảm so với quá khứ  ⟹  r_n^t < 1 (mô hình đang học tốt)
-  • Loss bão hòa hoặc tăng    ⟹  r_n^t = 1 (giữ nguyên σ)
+  • Val loss giảm so với quá khứ  ⟹  r_n^t < 1 (model còn generalize tốt)
+  • Val loss bão hòa hoặc tăng    ⟹  r_n^t = 1 (giữ nguyên σ, dừng phí budget)
 
 Bước 2 — Cập nhật EMA của Loss (làm mượt đường cong):
   Loss̄_n^t  =  γ · Loss̄_n^{t−1}  +  (1 − γ) · Loss_n^t
@@ -294,13 +302,27 @@ qua cả 2 phải **vừa Gaussian-looking vừa cùng-hướng-peers** → gầ
 
 ```
 IF d'_n > 0 THEN:
-                                1
-  w_{n,t}  =  w_{n,t−1}  +  ────────── · ⎛ Δw̃_{n,t}  +  Σ  Δw̃_{j,t} ⎞
-                             d'_n + 1    ⎝               j∈N'_n      ⎠
+                                                     1
+  w_{n,t}  =  w_{n,t−1}  +  Δw̃_{n,t}  +  ───────  ·  Σ  Δw̃_{j,t}
+                                              d'_n      j∈N'_n
 ELSE:
   w_{n,t}  =  w_{n,t−1}  +  Δw̃_{n,t}     // chỉ dùng local
 END IF
 ```
+
+**Triết lý "self-trust + neighbor correction"**: own update Δw̃_n giữ FULL
+weight (bản thân node tin chính mình hoàn toàn), neighbors sạch đóng góp
+qua trung bình đều `1/d'_n`. Đây là trade-off với uniform mean cổ điển
+`1/(d'_n + 1)`:
+
+  • Self-trust full-weight  ⟹  preserve local SGD progress, accuracy cao
+                               trên Non-IID (mỗi node giữ local signal mạnh).
+  • Neighbor mean             ⟹  consensus push qua peer-aggregated correction,
+                               vẫn hấp thụ thông tin từ neighborhood.
+  • Trade-off: step size effective lớn hơn uniform mean ~(d'+1)/2 lần →
+    cần `lr` thấp hơn để tránh divergence; consensus rate chậm hơn so với
+    uniform mean (acceptable cho thiết lập Non-IID nhưng cần lưu ý khi
+    benchmark IID).
 
 ---
 
@@ -350,6 +372,15 @@ OUTPUT:
 
 1.  Tất cả nodes khởi tạo cùng model: w_{n,0} ← w₀  (∀n)
 
+1b. Train/Val split (deterministic theo seed) — Issue 2 fix:
+      FOR mỗi honest node n:
+        n_val ← max(1, round(v · |D_n|))            // v = 0.1 hardcoded
+        rng_n ← seed_global · 1_000_039 + n          // prime-mult per node
+        D_n^val   ← random subset of D_n size n_val (using rng_n)
+        D_n^train ← D_n \ D_n^val
+      // Attackers giữ nguyên D_n (không tính loss → không cần split).
+      // SGD (BƯỚC 1) chỉ chạy trên D_n^train; BƯỚC 2 đo loss trên D_n^val.
+
 2.  Mỗi node n khởi tạo RDP accountant:
       FOR mỗi α ∈ α_list:
         ε_rdp,n[α] ← 0
@@ -394,13 +425,14 @@ OUTPUT:
 
     ┌─────────────────────────────────────────────────┐
     │  BƯỚC 1: LOCAL TRAINING (không DP tại đây)      │
+    │  Train CHỈ trên D_n^train (= D_n \ D_n^val).     │
     ├─────────────────────────────────────────────────┤
 6.  │  w_temp ← w_{n,t−1}                             │
     │                                                  │
 7.  │  FOR epoch e = 1 TO E DO:                        │
-8.  │    Shuffle D_n ngẫu nhiên                        │
+8.  │    Shuffle D_n^train ngẫu nhiên                  │
     │                                                  │
-9.  │    FOR mỗi mini-batch b ⊂ D_n (size B) DO:      │
+9.  │    FOR mỗi mini-batch b ⊂ D_n^train (size B) DO:│
 10. │      g ← ∇L(w_temp; b)                          │
 11. │      w_temp ← w_temp − η · g                    │
 12. │    END FOR                                       │
@@ -411,12 +443,14 @@ OUTPUT:
     └─────────────────────────────────────────────────┘
 
     ┌─────────────────────────────────────────────────┐
-    │  BƯỚC 2: TÍNH LOSS CỤC BỘ                        │
-    │  (trên tập train hoặc validation cục bộ)         │
+    │  BƯỚC 2: TÍNH VALIDATION LOSS CỤC BỘ            │
+    │  Đánh giá trên D_n^val (held-out, KHÔNG train).  │
+    │  Lý do: val loss phản ánh generalization →       │
+    │  adaptive ratio đúng hành vi spec mong muốn.     │
     ├─────────────────────────────────────────────────┤
-15. │  Loss_n^t ← L(w_temp; D_n)                       │
-    │             // hoặc L(w_temp; D_n^val) nếu có   │
+15. │  Loss_n^t ← L(w_temp; D_n^val)                   │
     │             // dùng chính model vừa train xong  │
+    │             // (cost: 1 forward pass, 0 ε)      │
     └─────────────────────────────────────────────────┘
 
     ┌─────────────────────────────────────────────────┐
@@ -493,14 +527,15 @@ OUTPUT:
     ┌─────────────────────────────────────────────────┐
     │  BƯỚC 5: TỔNG HỢP TRÊN NEIGHBORS SẠCH           │
     │  (AND-of-clean: accept iff pass L1 AND L2)      │
+    │  Self-trust: own Δw̃ full weight, neighbor mean  │
     ├─────────────────────────────────────────────────┤
 20q.│  M_n^t ← F1 ∪ F2               // tập malicious │
 20r.│  N'_n  ← N_n \ M_n^t           // tập clean     │
 20s.│  d'_n  ← |N'_n|                                  │
     │                                                  │
     │  IF d'_n > 0 THEN:                               │
-21. │    w_{n,t} ← w_{n,t−1} + (1/(d'_n + 1)) ·        │
-    │              (Δw̃_{n,t} + Σ_{j ∈ N'_n} Δw̃_{j,t}) │
+21. │    w_{n,t} ← w_{n,t−1} + Δw̃_{n,t}               │
+    │              + (1/d'_n) · Σ_{j ∈ N'_n} Δw̃_{j,t} │
     │  ELSE:                                           │
 22. │    w_{n,t} ← w_{n,t−1} + Δw̃_{n,t}              │
     │  END IF                                          │
@@ -749,7 +784,9 @@ Nguyên tắc hoạt động:
 │  γ           │  0.9      │  EMA smoothing cho Loss             │
 │  β_min       │  0.95     │  Max decay/round (5% mỗi round)     │
 │  ε           │  10⁻⁸     │  Numerical tránh chia 0             │
-│  Loss source │  train/val│  Dữ liệu tính loss (khuyến nghị val)│
+│  v           │  0.1      │  val_ratio = |D_n^val| / |D_n|       │
+│              │  (hardcoded)│  (split deterministic theo seed)   │
+│  Loss source │  D_n^val  │  Validation loss (mặc định, ép buộc)│
 ├──────────────┼───────────┼────────────────────────────────────┤
 │  β_m         │  0.9      │  Momentum EMA coef (L1 cosine)      │
 │  γ_mad       │  2.0      │  MAD multiplier → cosine threshold  │

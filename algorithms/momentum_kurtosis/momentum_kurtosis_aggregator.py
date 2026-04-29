@@ -160,7 +160,9 @@ class MomentumKurtosisAggregator(BaseAggregator):
         round_t: int,
     ) -> (Set[int], float):
         # Warmup: momentum buffers not yet converged -> no L1 flagging.
-        if round_t <= self.warmup or len(cos_scores) < 2:
+        # Spec docs/adaptive-noise.md §2.5.2: `IF t < T_w THEN F1 ← False`,
+        # so flagging activates AT t = T_w. Use strict `<`, not `<=`.
+        if round_t < self.warmup or len(cos_scores) < 2:
             return set(), float("-inf")
         vals = torch.tensor(list(cos_scores.values()))
         med = vals.median().item()

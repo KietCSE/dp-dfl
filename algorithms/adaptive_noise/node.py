@@ -6,6 +6,8 @@ Extends core Node with:
   - last_loss:       most recent local loss value (for logging/printing)
   - rdp_per_alpha:   RDP accumulator per alpha (set by PerNodeRDPAccountant)
   - frozen:          True once cumulative epsilon exceeds epsilon_max
+  - val_data:        held-out validation Subset for adaptive-ratio loss eval
+                     (Issue 2 fix — populated by simulator.setup())
 """
 
 from typing import Optional
@@ -27,3 +29,4 @@ class AdaptiveNoiseNode(Node):
         self.last_loss: float = 0.0
         self.rdp_per_alpha: list = []   # initialized by accountant.init_node_state()
         self.frozen: bool = False
+        self.val_data: Optional[Subset] = None   # set by simulator.setup() for honest nodes

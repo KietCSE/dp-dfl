@@ -25,12 +25,18 @@ from typing import Dict
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from dpfl.core.base_simulator import BaseSimulator
 from dpfl.algorithms.adaptive_noise.node import AdaptiveNoiseNode
 
 logger = logging.getLogger(__name__)
+
+# Issue 2 fix: hold out 10% local data as D_n^val for adaptive-ratio loss eval.
+# Spec docs/adaptive-noise.md §7 recommends val (not train) so r_n^t reflects
+# generalization signal, not raw SGD optimization progress. Hardcoded — not
+# exposed via config (KISS; default chosen per DL convention).
+_VAL_RATIO = 0.1
 
 
 class AdaptiveNoiseSimulator(BaseSimulator):
@@ -61,6 +67,41 @@ class AdaptiveNoiseSimulator(BaseSimulator):
             self.rdp.init_node_state(node)
         return node
 
+    def setup(self):
+        """Initialize via base, then split honest nodes' data into train+val.
+
+        Issue 2 fix: hold out _VAL_RATIO of D_n as D_n^val so the adaptive
+        ratio's Loss_n^t reflects generalization (val), not optimization
+        progress (train). SGD trainer mutates `node.data` for batches → we
+        replace it with the train subset so training auto-uses train-only.
+        Attackers don't compute loss → skipped (val_data stays None).
+
+        Split is deterministic per (config.seed, node.id) using a prime
+        multiplier (same pattern as base_simulator._make_isolated_gen) so
+        identical configs yield identical splits across runs.
+        """
+        super().setup()
+        for node in self.nodes.values():
+            if node.is_attacker:
+                continue
+            base = node.data
+            n = len(base)
+            val_size = max(1, int(round(_VAL_RATIO * n)))
+            rng = np.random.RandomState(int(self.config.seed) * 1_000_039 + node.id)
+            indices = np.arange(n)
+            rng.shuffle(indices)
+            val_idx = indices[:val_size].tolist()
+            train_idx = indices[val_size:].tolist()
+            base_indices = base.indices
+            node.val_data = Subset(base.dataset,
+                                   [base_indices[i] for i in val_idx])
+            node.data = Subset(base.dataset,
+                               [base_indices[i] for i in train_idx])
+        n_split = sum(1 for n in self.nodes.values()
+                      if n.val_data is not None)
+        logger.info("Adaptive-noise val split: %d honest nodes, ratio=%.2f",
+                    n_split, _VAL_RATIO)
+
     def _clip_and_noise(self, update: torch.Tensor, sigma: float,
                         clip_bound: float) -> torch.Tensor:
         """User-level L2 clip to norm C, then add Gaussian noise with std sigma.
@@ -79,17 +120,24 @@ class AdaptiveNoiseSimulator(BaseSimulator):
         return clipped + raw * sigma
 
     def _compute_local_loss(self, node) -> float:
-        """Mean cross-entropy on local data using current node.model (w_temp).
+        """Mean cross-entropy on D_n^val using current node.model (w_temp).
 
         Called right after local training (BƯỚC 2). Model is in eval mode
         for a single pass, then restored to train mode. Cost: one forward
-        pass over D_n per round (no backward). Post-processing of the
+        pass over D_n^val per round (no backward). Post-processing of the
         local model → 0 privacy budget.
+
+        Issue 2 fix: evaluate on held-out validation subset (not train data)
+        so Loss_n^t reflects generalization → adaptive ratio r correctly
+        signals "still learning" vs "saturated/overfit". Falls back to
+        node.data if val_data is None (safety guard; honest nodes get
+        val_data via setup()).
         """
         node.model.eval()
         total_loss = 0.0
         total_n = 0
-        loader = DataLoader(node.data, batch_size=256, shuffle=False)
+        eval_data = node.val_data if node.val_data is not None else node.data
+        loader = DataLoader(eval_data, batch_size=256, shuffle=False)
         with torch.no_grad():
             for x, y in loader:
                 x, y = x.to(self.device), y.to(self.device)
@@ -112,6 +160,17 @@ class AdaptiveNoiseSimulator(BaseSimulator):
             #   algorithms for fair comparison.
             # - Attackers always active (within attack window).
             active_ids = self._sample_active_nodes(t)
+
+            # Snapshot W_old for honest active nodes BEFORE training. Needed
+            # to reset model state to (W_old + Δw̃) after clip+noise so the
+            # aggregator contract `own_params - own_update == W_old` holds.
+            # Attackers don't need a snapshot — their noisy_update is the raw
+            # poisoned delta, so own_params - own_update == W_old already.
+            W_old_map: Dict[int, torch.Tensor] = {}
+            for nid in active_ids:
+                node = self.nodes[nid]
+                if not node.is_attacker:
+                    W_old_map[nid] = node.model.get_flat_params().clone()
 
             # BƯỚC 1: local training — train ALL nodes (simulation cost), then
             # filter to active only. For attacker/frozen logic downstream.
@@ -136,6 +195,16 @@ class AdaptiveNoiseSimulator(BaseSimulator):
                     continue
                 noisy_updates[nid] = self._clip_and_noise(
                     raw_updates[nid], node.sigma_n, C)
+
+            # Bug 3 fix: reset honest active models to (W_old + Δw̃) so the
+            # aggregator's contract `own_params - own_update == W_old` holds.
+            # Without this, models stay at (W_old + Δw_raw) → aggregator
+            # back-out yields a spurious (Δw_raw - Δw̃) term per round.
+            for nid, noisy in noisy_updates.items():
+                node = self.nodes[nid]
+                if node.is_attacker or nid not in W_old_map:
+                    continue
+                node.model.set_flat_params(W_old_map[nid] + noisy)
 
             # BƯỚC 4+5: aggregate — only active nodes update their model,
             # only from active neighbors (simple_avg over received).
@@ -215,15 +284,24 @@ class AdaptiveNoiseSimulator(BaseSimulator):
                 node.sigma_n = next_sigma
 
             # BƯỚC 8 (post-loop): RDP accounting for ALL honest non-frozen
-            # nodes using their CURRENT sigma_n. Under Poisson subsampling at
-            # rate q, every round contributes q²·full_cost regardless of
+            # nodes using their CURRENT-round sigma_n. Under Poisson subsampling
+            # at rate q, every round contributes q²·full_cost regardless of
             # whether this specific node was sampled — the amplification
             # factor comes from adversary uncertainty about the coin flip.
+            #
+            # Bug 1 fix: active honest nodes have already mutated `node.sigma_n`
+            # to next-round σ inside the inner loop. Use sigma_before captured
+            # in extra_node[nid]["sigma_n"] to charge cost against THIS round's
+            # σ (per spec line 549: "DÙNG σ_{n,t} CỦA ROUND HIỆN TẠI").
+            # Inactive honest nodes never entered the inner loop → their
+            # node.sigma_n is still this round's value, so fall back to it.
             if self.rdp is not None:
                 for nid, node in self.nodes.items():
                     if node.is_attacker or node.frozen:
                         continue
-                    self.rdp.step(node, C, node.sigma_n, sampling_rate=q)
+                    sigma_for_step = extra_node.get(nid, {}).get(
+                        "sigma_n", node.sigma_n)
+                    self.rdp.step(node, C, sigma_for_step, sampling_rate=q)
                     eps_n = self.rdp.get_epsilon(node)
                     if eps_n > self.rdp.epsilon_max:
                         node.frozen = True
