@@ -50,13 +50,21 @@ class DFLSimulator(BaseSimulator):
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 
             # Step 3: Privacy accounting
+            # NOTE: FLAME aggregator adds its own DP noise internally; using
+            # noise_mode=post_training with FLAME would double-count noise.
+            # Out-of-scope fix here — keep FLAME on per_step / none.
             epsilon = 0.0
             if self.accountant is not None:
-                honest_steps = next(
-                    s for nid, s in all_steps.items() if nid not in self.attacker_ids)
-                q_batch = self.config.training.batch_size / self.nodes[
-                    self.config.topology.n_attackers].n_samples
-                self.accountant.step(honest_steps, q_batch, self.config.dp.noise_mult)
+                if self.config.dp.noise_mode == "post_training":
+                    # User-level DP: 1 noise application per round, no subsampling
+                    self.accountant.step(1, 1.0, self.config.dp.noise_mult)
+                else:
+                    # per_step DP-SGD: K steps with Poisson subsampling q = B/n
+                    honest_steps = next(
+                        s for nid, s in all_steps.items() if nid not in self.attacker_ids)
+                    q_batch = self.config.training.batch_size / self.nodes[
+                        self.config.topology.n_attackers].n_samples
+                    self.accountant.step(honest_steps, q_batch, self.config.dp.noise_mult)
                 epsilon = self.accountant.get_epsilon()
 
             # Step 4: Evaluate + log
