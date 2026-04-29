@@ -21,7 +21,7 @@ training:
   n_workers: 1
 
 dp:
-  noise_mode: none            # D2B-DP injects per-layer noise itself (Step 3)
+  noise_mode: none            # D2B-DP injects per-layer Gaussian noise itself (Step 2.2)
   delta: 1.0e-5
   epsilon_max: 100000000.0
   accountant: renyi_dpsgd
@@ -39,20 +39,23 @@ aggregation:
   params: {}
 
 trust:
+  # Step 2.1 — adaptive clip
   k: 5
-  bound_k: 3.0
+  # Step 2.2 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
   rho_min: 0.1
-  rho_max: 1.0
+  rho_max: 10.0
   beta: 0.05
-  theta: 1.1
-  gamma: 2.5
-  kappa: 5.0
+  # Step 3.3 — anomaly threshold
+  theta: 1.2
+  gamma: 3.0
+  kappa: 0.2
+  # Step 4.2 — trust EMA
   alpha_T: 0.85
   trust_init: 1.0
-  T_min: 0.3
-  beta_soft: 3.0
+  # Step 4.3 — softmax aggregation + momentum
+  T_min: 0.4
+  beta_soft: 8.0
   beta_m: 0.9
-  eta_global: 0.01
 
 output_dir: ./results
 device: auto

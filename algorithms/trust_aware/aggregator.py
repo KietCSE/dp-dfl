@@ -1,17 +1,21 @@
-"""Trust-Aware D2B-DP aggregator (RMS distance + softmax + momentum).
+"""Trust-Aware D2B-DP aggregator (RMSE distance + softmax + momentum).
 
-Implements Steps 4-7 of docs/Trust-Aware-D2B-DP.md:
-    Step 4 — RMS distance D_{ij} and cosine similarity C_{ij}
-    Step 5 — D_threshold (decay term vs. C_DP floor) is computed by simulator
-             (it needs per-layer σ² — kept out of the aggregator state)
-    Step 6 — Continuous trust update: Q = p_dist · p_cos, T ← α_T·T + (1-α_T)·Q
-    Step 7 — Softmax aggregation over safe set V = {j | T_{ij} ≥ T_min},
-             then momentum:  V_agg = β_m·V_agg + (1-β_m)·S_agg
-                              W    = W_old + η_global·V_agg
+Implements Phase 3 (Inbound Evaluation) and Phase 4 (History & Aggregation)
+of docs/Trust-Aware-D2B-DP.md:
+    Step 3.1 — Cosine similarity  C_{i,j}^(t)
+    Step 3.2 — RMSE distance      D_{i,j}^(t) = ||ΔW'_i - S_j||₂ / √D_total
+    Step 3.3 — D_threshold (decay vs. C_DP floor) is computed by the simulator
+               (it owns the per-layer σ²_l,t needed for C_DP^(t))
+    Step 4.1 — Q_{i,j}^(t) = p_dist · p_cos
+                with p_dist = exp(-D / D_threshold), p_cos = max(0, cos)
+    Step 4.2 — T_{i,j}^(t) = α_T · T_{i,j}^(t-1) + (1 - α_T) · Q_{i,j}^(t)
+    Step 4.3 — V = {j | T_{i,j}^(t) ≥ T_min}
+                w_{i,j} = softmax(β_soft · T)
+                S_agg   = Σ w_{i,j} · S_j
+                V_agg^(t) = β_m · V_agg^(t-1) + (1 - β_m) · S_agg^(t)
+                W_i^(t)   = W_i^(t-1) + V_agg^(t)
 
-Sign note: Sec 7 of the spec writes
-    W_i^(t) = W_i^(t-1) - η_global · V_agg
-We strictly follow the specification. State (V_agg, trust_scores) lives on the node.
+Per-round state lives on the node (V_agg, trust_scores).
 """
 
 import math
@@ -28,11 +32,11 @@ from dpfl.registry import AGGREGATORS, register
 class TrustAwareD2BAggregator(BaseAggregator):
     """Soft-trust aggregator with momentum for Trust-Aware D2B-DP."""
 
-    def __init__(self, theta: float = 1.1, gamma: float = 2.5, kappa: float = 5.0,
-                 alpha_T: float = 0.85, T_min: float = 0.3, beta_soft: float = 3.0,
-                 beta_m: float = 0.9, eta_global: float = 0.01, **_kwargs):
-        # theta/gamma/kappa are consumed by the simulator (D_threshold compute)
-        # but kept on the aggregator so a single config block drives everything.
+    def __init__(self, theta: float = 1.2, gamma: float = 3.0, kappa: float = 0.2,
+                 alpha_T: float = 0.85, T_min: float = 0.4, beta_soft: float = 8.0,
+                 beta_m: float = 0.9, **_kwargs):
+        # theta/gamma/kappa are consumed by the simulator (D_threshold compute);
+        # parked on the aggregator so a single config block drives everything.
         self.theta = theta
         self.gamma = gamma
         self.kappa = kappa
@@ -40,7 +44,6 @@ class TrustAwareD2BAggregator(BaseAggregator):
         self.T_min = T_min
         self.beta_soft = beta_soft
         self.beta_m = beta_m
-        self.eta_global = eta_global
 
     def aggregate(self, own_update: torch.Tensor, own_params: torch.Tensor,
                   neighbor_updates: Dict[int, torch.Tensor],
@@ -51,13 +54,12 @@ class TrustAwareD2BAggregator(BaseAggregator):
                   D_total: int = 0) -> AggregationResult:
         """Run trust update + softmax aggregation + momentum step.
 
-        own_update     : ΔW'_i (clipped, NO noise) — flat tensor.
-        own_params     : current W_trained (post-train) — used as fallback if
-                         W_old is not provided (W_old = own_params - own_update).
+        own_update     : ΔW'_i (clipped, no noise) — flat tensor.
+        own_params     : current W_trained — fallback if W_old is missing.
         neighbor_updates: {j -> S_j} flat noisy packets from active neighbors.
         W_old          : start-of-round weights; required for the global step.
         V_agg_prev     : node's persistent momentum buffer; None ⇒ zeros.
-        D_threshold    : precomputed RMS-distance threshold (Step 5).
+        D_threshold    : precomputed RMS-distance threshold (Step 3.3).
         trust_scores   : node's persistent T_{i,·} dict; mutated in place.
         D_total        : total parameter count (for RMS scaling of distance).
         """
@@ -75,7 +77,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
         if n_total == 0:
             S_agg = torch.zeros_like(own_update)
         else:
-            # Step 4-6: distance, cosine, trust EMA per neighbor
+            # Steps 3.1, 3.2, 4.1, 4.2 — cosine, RMSE, instant Q, trust EMA
             for j, s_j in neighbor_updates.items():
                 d_ij = (own_update - s_j).norm(2).item() / sqrt_D
                 cos_ij = F.cosine_similarity(
@@ -91,7 +93,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
                     "p_cos": p_cos, "q": q_ij, "trust": t_ij,
                 }
 
-            # Step 7: safe set V + softmax weights
+            # Step 4.3 — safe set V + softmax weights
             safe_ids = [j for j in neighbor_updates
                         if trust_scores.get(j, 0.0) >= self.T_min]
             if safe_ids:
@@ -109,11 +111,11 @@ class TrustAwareD2BAggregator(BaseAggregator):
                 S_agg = torch.zeros_like(own_update)
                 flagged_ids = list(neighbor_updates.keys())
 
-        # Momentum buffer + global step
+        # Step 4.3 — momentum buffer + additive global step
         if V_agg_prev is None:
             V_agg_prev = torch.zeros_like(own_update)
         V_agg = self.beta_m * V_agg_prev + (1.0 - self.beta_m) * S_agg
-        new_params = W_old - self.eta_global * V_agg
+        new_params = W_old + V_agg
 
         return AggregationResult(
             new_params=new_params,

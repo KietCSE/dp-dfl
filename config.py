@@ -122,31 +122,28 @@ class ExperimentConfig(BaseExperimentConfig):
 
 @dataclass
 class TrustConfig:
-    """Hyperparameters for Trust-Aware D2B-DP algorithm (RMS+Softmax+Momentum).
+    """Hyperparameters for Trust-Aware D2B-DP algorithm.
 
-    Maps directly onto Section 1 of docs/Trust-Aware-D2B-DP.md. Defaults track
+    Maps directly onto Section 4 of docs/Trust-Aware-D2B-DP.md. Defaults track
     the recommended values in that table.
     """
-    # Step 2 — Layer-wise Adaptive Clipping
-    k: int = 5                  # clip history window
-    # Step 3 — DP Budget Schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
+    # Step 2.1 — Layer-wise Adaptive Clipping
+    k: int = 5                  # clip history window (5–10)
+    # Step 2.2 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
     rho_min: float = 0.1
-    rho_max: float = 1.0
-    beta: float = 0.01
-    bound_eta: float = 0.5      # DP sensitivity parameter for noise bound
-    # Step 5 — Anomaly Threshold
-    theta: float = 1.1          # DP tolerance factor
-    gamma: float = 2.5          # threshold relaxation factor
-    kappa: float = 5.0          # threshold decay rate
-    # Step 6 — Trust EMA
-    alpha_T: float = 0.85
+    rho_max: float = 10.0
+    beta: float = 0.05          # noise decay rate
+    # Step 3.3 — Anomaly threshold
+    theta: float = 1.2          # DP floor multiplier
+    gamma: float = 3.0          # initial distance scale (3.0–5.0)
+    kappa: float = 0.2          # distance threshold decay
+    # Step 4.2 — Trust EMA
+    alpha_T: float = 0.85       # trust EMA factor (sustained good behavior)
     trust_init: float = 1.0
-    # Step 7 — Softmax Aggregation
-    T_min: float = 0.3          # safe-set inclusion threshold
-    beta_soft: float = 3.0      # softmax temperature
-    # Momentum + Global step
-    beta_m: float = 0.9
-    eta_global: float = 0.01    # global learning rate (often = local lr)
+    # Step 4.3 — Softmax aggregation + momentum
+    T_min: float = 0.4          # trust cutoff threshold
+    beta_soft: float = 8.0      # softmax temperature inverse
+    beta_m: float = 0.9         # momentum factor
 
 @dataclass
 class TrustAwareExperimentConfig(BaseExperimentConfig):

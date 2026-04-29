@@ -1,124 +1,136 @@
-## Tổng quan Thuật toán (Algorithm Overview)
+## 1. Vòng đời của một Node (Pipeline Overview)
 
-Thuật toán **Trust Aware** là một 파ipeline học máy phân tán (Decentralized/Federated Learning) được thiết kế nhằm đạt được 3 mục tiêu đồng thời:
+Trong mạng phi tập trung (Decentralized Network), tại mỗi vòng giao tiếp $t$, một node trung thực $i$ sẽ thực thi tuần tự 4 giai đoạn cốt lõi:
 
-1.  **Bảo vệ quyền riêng tư (Privacy-Preserving):** Thông qua cơ chế Layer-wise Adaptive Clipping và thêm nhiễu Gaussian chuẩn (Differential Privacy - DP).
-2.  **Kháng lỗi/Tấn công (Byzantine Robustness):** Loại bỏ các node độc hại (gửi gradient sai hoặc bị nhiễu quá nặng) thông qua hệ thống đánh giá đa chiều (Cosine, RMSE) và quản lý danh tiếng (Trust Score).
-3.  **Hội tụ ổn định:** Sử dụng Softmax Aggregation và Global Momentum để mượt mà hóa quỹ đạo cập nhật mô hình.
-
----
-
-## Bảng Chú thích Ký hiệu (Notations)
-
-- $t$: Chỉ số vòng giao tiếp (Communication round).
-- $W_i^{(t)}$: Trọng số mô hình cục bộ của node $i$ tại vòng $t$.
-- $\Delta W^{(t)}$: Vector cập nhật (Model Delta) chứa tri thức mới.
-- $L$: Tổng số lượng layer của mô hình.
-- $l$: Chỉ số của một layer cụ thể ($l \in [1, L]$).
-- $d_l$: Số lượng tham số của layer $l$.
-- $D_{total}$: Tổng số lượng tham số của toàn bộ mô hình ($D_{total} = \sum d_l$).
-- $Clip_l$: Ngưỡng cắt tỉa (clipping bound) động của layer $l$.
-- $\sigma_{l, (t)}^2$: Phương sai nhiễu DP tiêm vào layer $l$ tại vòng $t$.
-- $S_j$: Gói tin trọng số (đã thêm nhiễu) nhận được từ node hàng xóm $j$.
-- $T_{i,j}^{(t)}$: Điểm tin cậy (Trust Score) tổng hợp của node $j$ trong mắt node $i$.
+1. **Local Training:** Khai phá tri thức từ dữ liệu cục bộ.
+2. **Outbound Processing:** Định hình (clipping) và ẩn danh hóa (tiêm nhiễu DP) cập nhật trước khi phát sóng.
+3. **Inbound Evaluation:** Sàng lọc và đánh giá độ tin cậy của các gói tin nhận được từ mạng lưới.
+4. **History & Aggregation:** Cập nhật sổ xưng danh (Trust Score), tổng hợp có trọng số và áp dụng Momentum.
 
 ---
 
-## Chi tiết Thuật toán Step-by-Step
+## 2. Chi tiết Thuật toán
 
-### Giai đoạn 1: Local Training (Huấn luyện Cục bộ)
+### Giai đoạn 1: Local Training (Huấn luyện \& Tính Delta)
 
-**Bước 1: Huấn luyện và tính Model Delta**
-Node $i$ thực hiện quá trình huấn luyện mô hình (ví dụ: dùng SGD/Adam) trên tập dữ liệu cục bộ của mình để thu được trọng số mới $W_{trained}$. Sau đó, trích xuất lượng tri thức học được:
+Node $i$ thực hiện huấn luyện mô hình cục bộ (ví dụ: bằng SGD) trên tập dữ liệu riêng rẽ, bắt đầu từ trọng số toàn cục của vòng trước $W_i^{(t-1)}$.
+
+Sau khi huấn luyện, node thu được trọng số mới $W_{trained}$. Thay vì gửi toàn bộ trọng số, node chỉ trích xuất phần tri thức mới học được (Model Delta):
 $$\Delta W^{(t)} = W_{trained} - W_i^{(t-1)}$$
 
----
+### Giai đoạn 2: Outbound Processing (Bảo vệ Quyền riêng tư)
 
-### Giai đoạn 2: Outbound Processing (Xử lý trước khi gửi)
+Để chống lại các cuộc tấn công khôi phục dữ liệu (Data Reconstruction Attacks) đồng thời tránh làm hỏng các layer có gradient nhỏ, hệ thống áp dụng **Layer-wise Adaptive Clipping** và tiêm nhiễu.
 
-**Bước 2: Layer-wise Adaptive Clipping**
-Thay vì gọt giũa (clip) toàn bộ mô hình cùng lúc (có thể làm mất thông tin của các layer nhỏ), thuật toán tách riêng từng layer. Dùng hàng đợi $H_l$ kích thước $k$ lưu lịch sử chuẩn L2 của layer $l$ để tính ngưỡng động:
+**Bước 2.1: Layer-wise Adaptive Clipping**
+Với mỗi layer $l$, ngưỡng cắt tỉa động $Clip_l$ được tính dựa trên lịch sử trung bình chuẩn L2 của chính layer đó trong $k$ vòng gần nhất (sử dụng hàng đợi $H_l$):
 $$Clip_l = \frac{1}{k} \sum_{m=1}^k H_l[m]$$
-_(Lưu ý: Ở vòng đầu tiên, $Clip_l = \|\Delta W_{l}^{(1)}\|_2$)_
+_(Lưu ý: Tại vòng 1, $Clip_l = \|\Delta W_{l}^{(1)}\|_2$)_
 
-Tiến hành cắt tỉa layer $l$:
+Vector cập nhật của layer $l$ sau đó được đưa về giới hạn chuẩn:
 $$\Delta W'_{l} = \frac{\Delta W_{l}^{(t)}}{\max\left(1, \frac{\|\Delta W_{l}^{(t)}\|_2}{Clip_l}\right)}$$
 
-**Bước 3: Bơm nhiễu Gaussian Chuẩn (DP)**
-Tính phương sai nhiễu động, giảm dần theo thời gian (để ưu tiên hội tụ ở các vòng cuối):
+**Bước 2.2: Tiêm Nhiễu Gaussian Chuẩn**
+Phương sai nhiễu cho từng layer được hiệu chỉnh theo ngân sách $\rho^{(t)}$ (tăng dần theo thời gian để giảm dần nhiễu khi mô hình đã hội tụ):
 $$\sigma_{l, (t)}^2 = \frac{2 \cdot (Clip_l)^2}{\rho^{(t)}}$$
-Trong đó $\rho^{(t)} = \min\left( (1 + \beta t)\rho_{min}, \rho_{max} \right)$.
-
-Sinh nhiễu và cộng trực tiếp vào layer:
-$$x_l \sim \mathcal{N}(0, \sigma_{l, (t)}^2)$$
+Vớii $\rho^{(t)} = \min\left( (1 + \beta t)\rho_{min}, \rho_{max} \right)$.
+Nhiễu Gaussian $x_l \sim \mathcal{N}(0, \sigma_{l, (t)}^2)$ được cộng trực tiếp vào trọng số đã cắt tỉa:
 $$\tilde{W}_{i, l} = \Delta W'_{l} + x_l$$
-Cuối cùng, đóng gói tất cả các $\tilde{W}_{i, l}$ thành vector $\tilde{W}_i$ và gửi cho các node hàng xóm.
 
----
+**Bước 2.3: Đánh giá Rényi DP Accounting**
+Mức độ rò rỉ quyền riêng tư (Privacy Loss) tại vòng $t$ với bậc $\alpha$ được kiểm soát chặt chẽ bởi layer chịu nhiễu yếu nhất so với độ nhạy (worst-case scenario):
+$$\epsilon^{(t)}(\alpha) = \frac{\alpha}{2} \max_{l \in [1, L]} \left( \frac{Clip_l}{\sigma_{l, (t)}} \right)^2$$
 
-### Giai đoạn 3: Inbound Evaluation (Đánh giá Gói tin đến)
+Các layer được gộp lại thành vector cuối cùng $\tilde{W}_i$ và gửi đến các node láng giềng.
 
-**Bước 4: Đánh giá Đa chiều**
-Khi nhận được vector $S_j$ từ node $j$, node $i$ so sánh nó với vector cục bộ $\Delta W'_i$ (trước khi bản thân thêm nhiễu) qua 2 khía cạnh:
+### Giai đoạn 3: Inbound Evaluation (Đánh giá Đa chiều)
 
-1.  _Hướng (Cosine Similarity):_ Xem node $j$ có đang đi cùng hướng tối ưu không.
-    $$C_{i,j}^{(t)} = \frac{\langle \Delta W'_i, S_j \rangle}{\|\Delta W'_i\|_2 \cdot \|S_j\|_2}$$
-2.  _Khoảng cách RMSE (Normalized L2):_ Khắc phục lời nguyền chiều dữ liệu bằng cách chia cho $\sqrt{D_{total}}$.
-    $$D_{i,j}^{(t)} = \frac{1}{\sqrt{D_{total}}} \|\Delta W'_i - S_j\|_2$$
+Khi node $i$ nhận được gói tin $S_j$ từ node hàng xóm $j$, nó sẽ đối chiếu $S_j$ với vector cục bộ của mình (đã qua bước 2.1) là $\Delta W'_i$.
 
-**Bước 5: Xác định Ngưỡng Dị thường**
-Tính mức sàn nhiễu DP (độ rung lắc hợp lệ tối thiểu do chính nhiễu Gaussian gây ra):
+**Bước 3.1: Đo lường Hướng (Cosine Similarity)**
+Kiểm tra xem node $j$ có đang tối ưu cùng hướng với node $i$ hay không:
+$$C_{i,j}^{(t)} = \frac{\langle \Delta W'_i, S_j \rangle}{\|\Delta W'_i\|_2 \cdot \|S_j\|_2}$$
+
+**Bước 3.2: Đo lường Khoảng cách Chuẩn hóa (RMSE)**
+Khắc phục sự bùng nổ của nhiễu DP trong không gian nhiều chiều bằng cách chia cho tổng số lượng tham số $D_{total} = \sum d_l$:
+$$D_{i,j}^{(t)} = \frac{1}{\sqrt{D_{total}}} \|\Delta W'_i - S_j\|_2$$
+
+**Bước 3.3: Ngưỡng Dị thường Động (Dynamic Threshold)**
+Hệ thống thiết lập một ranh giới khoảng cách an toàn. Ngưỡng này suy giảm theo hàm mũ để siết chặt dần khi mô hình hội tụ, nhưng không bao giờ rơi xuống dưới **Mức sàn DP Toán học ($C_{DP}^{(t)}$)** (vì nhiễu DP chắc chắn sẽ gây ra một độ lệch tối thiểu):
 $$C_{DP}^{(t)} = \theta \cdot \sqrt{ \frac{1}{D_{total}} \sum_{l=1}^L d_l \cdot \sigma_{l, (t)}^2 }$$
-Tính ngưỡng khoảng cách động (suy giảm theo thời gian nhưng không bao giờ thủng mức sàn $C_{DP}$):
 $$D_{threshold}^{(t)} = \max \left( \gamma \cdot \exp(-\kappa \cdot \lambda(t)) \cdot \frac{\|\Delta W'_i\|_2}{\sqrt{D_{total}}}, \; C_{DP}^{(t)} \right)$$
 
----
+### Giai đoạn 4: History \& Aggregation (Tổng hợp Tin cậy)
 
-### Giai đoạn 4: History & Aggregation (Tổng hợp & Cập nhật)
+Thay vì loại bỏ cứng nhắc (hard threshold), hệ thống sử dụng điểm số liên tục để node trung thực bị lệch hướng do nhiễu không bị cấm vĩnh viễn, trong khi node Byzantine bị cô lập.
 
-**Bước 6: Quản lý Lịch sử Danh tiếng**
-Chấm điểm chất lượng tức thời của gói tin $j$ tại vòng $t$:
-$$p_{dist} = \exp\left( - \frac{D_{i,j}^{(t)}}{D_{threshold}^{(t)}} \right)$$
-$$p_{cos} = \max\left(0, \; C_{i,j}^{(t)}\right)$$
+**Bước 4.1: Chấm điểm Tức thời (Instant Quality)**
+$$p_{dist} = \exp\left( - \frac{D_{i,j}^{(t)}}{D_{threshold}^{(t)}} \right) \quad ; \quad p_{cos} = \max\left(0, \; C_{i,j}^{(t)}\right)$$
 $$Q_{i,j}^{(t)} = p_{dist} \cdot p_{cos}$$
-_(Bộ lọc ReLU ở $p_{cos}$ sẽ trừng phạt thẳng tay điểm $0$ cho bất kỳ node nào có dấu hiệu Sign-flipping attack).\_
 
-Cập nhật hàm mũ danh tiếng (EMA - Exponential Moving Average) để có cái nhìn dài hạn, khởi tạo $T_{i,j}^{(0)} = 1.0$:
+**Bước 4.2: Lịch sử Danh tiếng (EMA Trust Score)**
+Cập nhật điểm tin cậy thông qua Trung bình Trượt Mũ (Exponential Moving Average):
 $$T_{i,j}^{(t)} = \alpha_T \cdot T_{i,j}^{(t-1)} + (1 - \alpha_T) \cdot Q_{i,j}^{(t)}$$
 
-**Bước 7: Softmax Aggregation & Global Momentum**
-Lọc tập hợp các node hợp lệ $\mathbb{V}$ thỏa mãn $T_{i,j}^{(t)} \ge T_{min}$. Dùng Softmax để tính trọng số đóng góp dựa trên độ tin cậy:
+**Bước 4.3: Softmax Aggregation \& Momentum Update**
+Chỉ các node đạt ngưỡng tin cậy tối thiểu ($\mathbb{V}: T \ge T_{min}$) mới được đưa vào tổng hợp. Trọng số đóng góp được khuếch đại bằng Softmax với nhiệt độ $\beta_{soft}$:
 $$w_{i,j}^{(t)} = \frac{\exp(\beta_{soft} \cdot T_{i,j}^{(t)})}{\sum_{k \in \mathbb{V}} \exp(\beta_{soft} \cdot T_{i,k}^{(t)})}$$
-
-Tổng hợp các vector:
+Vector tổng hợp an toàn:
 $$S_{agg}^{(t)} = \sum_{j \in \mathbb{V}} w_{i,j}^{(t)} \cdot S_j$$
-
-Áp dụng Global Momentum để làm mượt quỹ đạo, sau đó cập nhật thẳng vào mô hình gốc:
+Tích hợp Momentum để tăng tốc độ hội tụ và làm phẳng quỹ đạo (ổn định hóa biến động do DP):
 $$V_{agg}^{(t)} = \beta_m \cdot V_{agg}^{(t-1)} + (1 - \beta_m) \cdot S_{agg}^{(t)}$$
+Cập nhật mô hình toàn cục:
 $$W_i^{(t)} = W_i^{(t-1)} + V_{agg}^{(t)}$$
 
 ---
 
-## Gợi ý Cấu hình Siêu tham số (Hyperparameter Configurations)
+## 3. Bảng Chú thích Ký hiệu (Notation)
 
-Để thuật toán hội tụ mượt mà và chống lại nhiễu tốt, dưới đây là các mức cấu hình (config) thực nghiệm được đề xuất dựa trên các hệ thống học phân tán tiêu chuẩn:
+| Ký hiệu                  | Ý nghĩa                                                   | Ký hiệu      | Ý nghĩa                                          |
+| :----------------------- | :-------------------------------------------------------- | :----------- | :----------------------------------------------- |
+| $t$                      | Vòng giao tiếp (Communication round) hiện tại             | $L$          | Tổng số lượng layer trong mạng nơ-ron            |
+| $W_{trained}$            | Trọng số sau khi huấn luyện cục bộ (Local SGD)            | $d_l$        | Số lượng tham số (kích thước) của layer $l$      |
+| $\Delta W^{(t)}$         | Vector cập nhật (Model Delta) nguyên bản                  | $D_{total}$  | Tổng số tham số của toàn bộ mô hình ($\sum d_l$) |
+| $H_l$                    | Hàng đợi lưu lịch sử chuẩn L2 của layer $l$               | $S_j$        | Gói tin chứa vector cập nhật nhận từ node $j$    |
+| $Clip_l$                 | Ngưỡng cắt tỉa động cho layer $l$                         | $\lambda(t)$ | Hàm đếm số vòng hoặc epochs đã trôi qua          |
+| $\sigma_{l, (t)}$        | Độ lệch chuẩn của nhiễu Gaussian cho layer $l$            | $p_{dist}$   | Điểm chất lượng dựa trên khoảng cách (RMSE)      |
+| $x_l$                    | Vector nhiễu được lấy mẫu từ phân phối chuẩn              | $p_{cos}$    | Điểm chất lượng dựa trên góc (Cosine)            |
+| $\tilde{W}_{i, l}$       | Vector layer $l$ sau khi cắt tỉa và tiêm nhiễu            | $\mathbb{V}$ | Tập hợp các node hàng xóm được cho là an toàn    |
+| $\epsilon^{(t)}(\alpha)$ | Độ rò rỉ quyền riêng tư Rényi ở vòng $t$ với bậc $\alpha$ | $V_{agg}$    | Bộ đệm Momentum chứa quán tính cập nhật          |
 
-### 1. Adaptive Clipping & Privacy (Giai đoạn 2)
+---
 
-- **$k$ (Kích thước cửa sổ lịch sử Clipping):** `5` đến `10`. Không nên để quá lớn vì mô hình thay đổi nhanh ở các vòng đầu, lịch sử cũ sẽ làm sai lệch ngưỡng.
-- **$\rho_{min}$ (Ngân sách nhiễu ban đầu):** Phụ thuộc vào mức độ bảo mật yêu cầu (thường tỷ lệ thuận với $\epsilon$). Khuyến nghị ở mức `0.1 - 0.5`.
-- **$\rho_{max}$ (Giới hạn nhiễu tối đa):** `5.0 - 10.0`. Chặn không cho mô hình bị thiếu nhiễu hoàn toàn ở cuối kỳ.
-- **$\beta$ (Tốc độ giảm nhiễu DP):** `0.01 - 0.05`. Tùy vào tổng số vòng $T$.
+## 4. Cấu hình Siêu tham số (Hyperparameters Tuning)
 
-### 2. Thresholds & Evaluation (Giai đoạn 3)
+Để pipeline đạt **hiệu suất cao nhất** (cân bằng giữa độ chính xác của mô hình, khả năng chống nhiễu loạn Byzantine và bảo toàn Differential Privacy), các tham số dưới đây được khuyến nghị tối ưu dựa trên các thiết lập tiêu chuẩn của mạng Học sâu Phân tán:
 
-- **$\theta$ (Hệ số đệm của mức sàn DP):** `1.05 - 1.2` (Khuyến nghị: `1.1`). Tạo một biên độ an toàn $10\%$ để không phạt nhầm node trung thực bị rung lắc do chính thuật toán gây ra.
-- **$\gamma$ (Scale ban đầu của ngưỡng động):** `3.0 - 5.0`. Ở những vòng đầu, đạo hàm rất lớn và biến động, cần nới lỏng ngưỡng này.
-- **$\kappa$ (Tốc độ siết ngưỡng theo hàm mũ):** `0.05 - 0.1` (Nếu $\lambda(t)$ là epoch number). Đảm bảo ở khoảng $30\% - 50\%$ thời gian huấn luyện, ngưỡng tiệm cận về sát mức sàn $C_{DP}$.
+### 4.1. Thông số Kỹ thuật Mạng (Network \& Momentum)
 
-### 3. Trust Score & Aggregation (Giai đoạn 4)
+- **$\beta_m$ (Momentum Factor): `0.9`**
+  - _Lý do:_ Giá trị kinh điển cho SGD with Momentum. Giúp bộ đệm $V_{agg}$ giữ lại 90% quán tính của quá trình tối ưu hóa trước đó, "san phẳng" các đỉnh nhiễu (variance) do DP gây ra và chống lại các vector độc hại lẻ tẻ.
+- **$k$ (Kích thước hàng đợi Clipping - Queue Size): `5` đến `10`**
+  - _Lý do:_ Đủ ngắn để bắt kịp xu hướng suy giảm tự nhiên của gradient khi mô hình hội tụ, đủ dài để không bị lệch bởi một vòng cập nhật nhiễu.
 
-- **$\alpha_T$ (Hệ số bảo lưu EMA Trust):** `0.8 - 0.9`. Cực kỳ quan trọng. Trọng số $\alpha_T$ cao giúp hệ thống nhớ "nhân cách tốt" của node lâu hơn, tránh việc một node tốt bị block chỉ vì một vòng gửi gradient nhiễu (khuyên dùng `0.85`).
-- **$T_{min}$ (Ngưỡng sinh tử - Cut-off Threshold):** `0.3 - 0.4`. Dưới mức này sẽ bị xem là Byzantine/Malignant và bị loại khỏi $\mathbb{V}$.
-- **$\beta_{soft}$ (Nhiệt độ Softmax):** `5.0 - 10.0`. Nếu để $=1$, phân phối trọng số sẽ rất đều (ai cũng được đóng góp na ná nhau). Nâng $\beta_{soft}$ lên cao (ví dụ `10`) sẽ có tác dụng "The winner takes all", dồn quyền lực lớn cho những node có điểm trust $T$ cao nhất.
-- **$\beta_m$ (Hệ số Global Momentum):** `0.85 - 0.95` (Khuyến nghị tiêu chuẩn: `0.9`). Giúp mô hình có quán tính vững vàng, triệt tiêu được các xung nhiễu DP còn sót lại sau khi aggregate.
+### 4.2. Thông số Bảo vệ Quyền riêng tư (Privacy Parameters)
+
+- **$\rho_{min}$ (Initial Privacy Budget Allocation): `0.1`**
+- **$\rho_{max}$ (Max Privacy Budget Allocation): `10.0`**
+- **$\beta$ (Noise Decay Rate): `0.05`**
+  - _Lý do:_ Tăng dần $\rho$ sẽ làm giảm phương sai nhiễu $\sigma^2$ ở các vòng sau (khi mô hình cần tinh chỉnh Fine-tuning). Ban đầu nhiễu lớn để bảo vệ các đặc trưng nhạy cảm, về sau nhiễu giảm để hội tụ mượt mà.
+- **$\alpha$ (Rényi DP Orders): `[2, 4, 8, 16, 32, 64]`**
+  - _Lý do:_ Tính toán trên một tập các bậc $\alpha$ để tìm ra bound chặt chẽ nhất khi chuyển đổi sang chuẩn $(\epsilon, \delta)$-DP bằng thư viện AutoDP hoặc Opacus.
+
+### 4.3. Thông số Đánh giá \& Tin cậy (Evaluation \& Trust)
+
+- **$\theta$ (DP Floor Multiplier): `1.2`**
+  - _Lý do:_ Nhân thêm 20% dung sai so với kỳ vọng toán học của nhiễu Gaussian để tránh việc các node trung thực bị phạt lầm (False Positive) do phương sai ngẫu nhiên trong quá trình lấy mẫu nhiễu.
+- **$\gamma$ (Initial Distance Scale): `3.0` đến `5.0`**
+  - _Lý do:_ Ở những vòng đầu, không gian trọng số thay đổi rất dữ dội (định hướng lại bề mặt mất mát). Ngưỡng này cần đủ lớn để không kìm hãm sự học hỏi sớm.
+- **$\kappa$ (Distance Threshold Decay): `0.2`**
+  - _Lý do:_ Tốc độ siết chặt ranh giới an toàn. $\kappa = 0.2$ mang lại đường cong suy giảm từ tốn, song hành cùng việc suy giảm Learning Rate.
+- **$\alpha_T$ (Trust EMA Factor): `0.85`**
+  - _Lý do:_ Sổ danh tiếng cần tính "nhớ dai". $\alpha_T = 0.85$ nghĩa là danh tiếng hiện tại chiếm 85% trọng số, node bắt buộc phải có hành vi tốt liên tục (sustained good behavior) mới vực dậy được điểm số, tránh kiểu tấn công "vỗ béo rồi làm thịt" (tỏ ra tốt rồi bất ngờ gửi mã độc).
+- **$T_{min}$ (Trust Cutoff Threshold): `0.4`**
+  - _Lý do:_ Bất kỳ node nào có điểm danh tiếng rớt xuống dưới 0.4 lập tức bị loại khỏi Aggregation để cách ly hoàn toàn.
+- **$\beta_{soft}$ (Softmax Temperature Inverse): `8.0`**
+  - _Lý do:_ Hệ số khuếch đại sự khác biệt. Nhiệt độ thấp (giá trị $\beta_{soft}$ cao) khiến Softmax phân cực mạnh: Node có điểm tin cậy $0.9$ sẽ chiếm tỷ trọng áp đảo gần như tuyệt đối so với node ở mức $0.5$. Điều này bảo vệ tối đa độ chính xác của Global Model.

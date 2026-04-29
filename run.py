@@ -86,21 +86,21 @@ def build_dpsgd_kurtosis(config, dataset_cls, model_cls, param_dim, tracker, dev
 def build_trust_aware(config, dataset_cls, model_cls, param_dim, tracker, device):
     from dpfl.algorithms.trust_aware.simulator import TrustAwareDFLSimulator
     from dpfl.algorithms.trust_aware.adaptive_clipper import LayerwiseAdaptiveClipper
-    from dpfl.algorithms.trust_aware.bounded_gaussian import LayerwiseBoundedGaussian
+    from dpfl.algorithms.trust_aware.gaussian_noise import LayerwiseGaussianNoise
     tc = config.trust
     noise_mechanism = NOISE_MECHANISMS["gaussian"]()
     attack = _build_attack(config)
     aggregator = AGGREGATORS["trust_aware_d2b"](
         theta=tc.theta, gamma=tc.gamma, kappa=tc.kappa,
         alpha_T=tc.alpha_T, T_min=tc.T_min, beta_soft=tc.beta_soft,
-        beta_m=tc.beta_m, eta_global=tc.eta_global)
-    # Heuristic ε reporting only — D2B-DP itself uses ρ-based noise schedule.
+        beta_m=tc.beta_m)
+    # ε reporting via Opacus SGM — matches Step 2.3 ε^(t)(α)=α·ρ_t/4 at q=1.
     accountant = _build_accountant(config)
     return TrustAwareDFLSimulator(
         config, tc, dataset_cls, model_cls,
         noise_mechanism, aggregator, attack,
         LayerwiseAdaptiveClipper(k=tc.k),
-        LayerwiseBoundedGaussian(bound_eta=tc.bound_eta),
+        LayerwiseGaussianNoise(),
         accountant=accountant, tracker=tracker, device=device)
 
 

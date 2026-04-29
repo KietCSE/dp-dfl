@@ -1,20 +1,26 @@
-"""Trust-Aware D2B-DP simulator: layer-wise clip+noise → RMS+softmax+momentum.
+"""Trust-Aware D2B-DP simulator.
 
-Maps to docs/Trust-Aware-D2B-DP.md Section 2 ("Quy trình thuật toán tại Vòng t"):
+Maps to docs/Trust-Aware-D2B-DP.md, the four phases per round t:
 
-  Phase 1  — Local training:        Δ = W_trained − W_old   (Step 1)
-  Phase 2  — Outbound processing:   per-layer Clip_l + bounded Gaussian noise
-                                    using ρ^(t) schedule    (Steps 2-3)
-  Phase 3  — Inbound evaluation:    RMS distance + cosine vs own ΔW'_i,
-                                    D_threshold = max(γ·exp(-κt/T_max)·rms_self,
-                                                      θ·sqrt(weighted σ²))
-                                                            (Steps 4-5)
-  Phase 4  — Trust + aggregation:   trust EMA, softmax over T ≥ T_min,
-                                    momentum, global step   (Steps 6-7)
+  Phase 1 — Local Training:        ΔW^(t) = W_trained − W_i^(t-1)
+  Phase 2 — Outbound Processing:   per-layer adaptive Clip_l (Step 2.1)
+                                   + Gaussian noise σ²_l = 2·Clip_l²/ρ^(t)
+                                   under ρ^(t) = min((1+βt)·ρ_min, ρ_max)
+                                   (Steps 2.2–2.3)
+  Phase 3 — Inbound Evaluation:    cosine + RMSE distance vs. own ΔW'_i,
+                                   D_threshold = max(γ·exp(-κ·t)·rms_self,
+                                                     C_DP^(t))
+                                   with C_DP^(t) = θ·√((1/D_total)·Σ d_l·σ²_l)
+                                   (Steps 3.1–3.3)
+  Phase 4 — History & Aggregation: Q = p_dist·p_cos, T ← α_T·T + (1-α_T)·Q,
+                                   safe set V = {j | T ≥ T_min},
+                                   softmax (β_soft) over V,
+                                   V_agg = β_m·V_agg + (1-β_m)·S_agg,
+                                   W ← W_old + V_agg          (Step 4.1–4.3)
 
-Privacy ε reporting (heuristic): use Opacus SGM with z = sqrt(2/ρ_t) per round.
-This is a cross-algo comparison aid — the algorithm itself does not track a
-hard privacy budget (ρ is treated as a noise budget per Step 3's formula).
+Privacy ε reporting uses Opacus SGM with z = √(2/ρ_t). For sampling_rate=1.0
+this matches the spec's Step 2.3 bound: ε^(t)(α) = α·ρ_t/4 (since
+(Clip_l/σ_l)² = ρ_t/2 for every layer under our σ² = 2·Clip²/ρ schedule).
 """
 
 import logging
@@ -33,20 +39,20 @@ logger = logging.getLogger(__name__)
 
 
 class TrustAwareDFLSimulator(BaseSimulator):
-    """Orchestrator for Trust-Aware D2B-DP (RMS+Softmax+Momentum version)."""
+    """Orchestrator for Trust-Aware D2B-DP."""
 
     def __init__(self, config, trust_config, dataset_cls, model_cls,
                  noise_mechanism, aggregator, attack,
-                 adaptive_clipper, bounded_noise,
+                 adaptive_clipper, gaussian_noise,
                  accountant=None, tracker=None, device=None):
         super().__init__(config, dataset_cls, model_cls,
                          noise_mechanism, aggregator, attack,
                          accountant=accountant, tracker=tracker, device=device)
         self.tc = trust_config
         self.clipper = adaptive_clipper
-        self.bounded_noise = bounded_noise
-        if hasattr(self.bounded_noise, "set_generator"):
-            self.bounded_noise.set_generator(self.noise_gen)
+        self.gaussian_noise = gaussian_noise
+        if hasattr(self.gaussian_noise, "set_generator"):
+            self.gaussian_noise.set_generator(self.noise_gen)
         self._layer_sizes: List[int] = []
 
     def _create_node(self, node_id, model, data, is_attacker):
@@ -61,12 +67,13 @@ class TrustAwareDFLSimulator(BaseSimulator):
                                 self.tc.k, self.tc.trust_init,
                                 device=self.device)
 
-    # ── Phase 1+2: train + per-layer clip + per-layer bounded noise ──────────
+    # ── Phase 2: per-layer clip + Gaussian noise ────────────────────────────
 
     def _build_packet(self, node: TrustAwareNode, raw_update: torch.Tensor,
-                      rho_t: float, sampling_rate: float):
-        """Per-layer clip → noise. Returns (own_clipped_flat, packet_flat,
-        sigma_sq_per_layer). Attackers skip noise but still get clipped."""
+                      rho_t: float):
+        """Per-layer clip → Gaussian noise. Returns (own_clipped_flat,
+        packet_flat, sigma_sq_per_layer). Attackers skip noise but still get
+        clipped (their own clipping history is also tracked)."""
         layers = list(torch.split(raw_update, self._layer_sizes))
         for li, layer in enumerate(layers):
             node.clip_history[li].append(layer.norm(2).item())
@@ -81,54 +88,34 @@ class TrustAwareDFLSimulator(BaseSimulator):
         noisy_layers: List[torch.Tensor] = []
         for cl_layer, thr in zip(clipped_layers, thresholds):
             clip_l = thr if thr is not None else cl_layer.norm(2).item()
-            sigma_sq = self.bounded_noise.compute_noise_variance(clip_l, rho_t)
-            
-            # Compute step epsilon dynamically for the specific layer's clip and sigma
-            epsilon_l = 100000.0
-            if getattr(self, "accountant", None) is not None:
-                from opacus.accountants.analysis.rdp import compute_rdp, get_privacy_spent
-                noise_mult = math.sqrt(max(sigma_sq, 1e-12)) / max(clip_l, 1e-12)
-                rdp = compute_rdp(
-                    q=float(sampling_rate),
-                    noise_multiplier=noise_mult,
-                    steps=1,
-                    orders=self.accountant.alpha_list,
-                )
-                epsilon_l, _ = get_privacy_spent(
-                    orders=self.accountant.alpha_list,
-                    rdp=rdp,
-                    delta=self.accountant.delta,
-                )
-
+            sigma_sq = self.gaussian_noise.compute_noise_variance(clip_l, rho_t)
             sigma_sqs.append(sigma_sq)
-            noisy_layers.append(
-                self.bounded_noise.add_bounded_noise(cl_layer, sigma_sq, epsilon_l))
+            noisy_layers.append(self.gaussian_noise.add_noise(cl_layer, sigma_sq))
         packet = torch.cat([nl.reshape(-1) for nl in noisy_layers])
         return own_clipped, packet, sigma_sqs
 
-    # ── Phase 3 helper: D_threshold from receiver-side σ² and own RMS norm ──
+    # ── Phase 3 helper: D_threshold (Step 3.3) ──────────────────────────────
 
     def _compute_d_threshold(self, own_clipped: torch.Tensor,
-                             own_sigma_sqs: List[float], t: int,
-                             T_max: int) -> float:
+                             own_sigma_sqs: List[float], t: int) -> float:
+        # C_DP^(t) = θ · √( (1/D_total) · Σ d_l · σ²_l )
         weighted_var = sum(d * s for d, s in
                            zip(self._layer_sizes, own_sigma_sqs))
         weighted_var /= max(self.param_dim, 1)
         c_dp = self.tc.theta * math.sqrt(max(weighted_var, 0.0))
+        # Decay term: γ · exp(-κ · t) · ||ΔW'_i||₂ / √D_total
         rms_self = own_clipped.norm(2).item() / math.sqrt(max(self.param_dim, 1))
-        decay = self.tc.gamma * math.exp(
-            -self.tc.kappa * t / max(T_max, 1)) * rms_self
+        decay = self.tc.gamma * math.exp(-self.tc.kappa * t) * rms_self
         return max(decay, c_dp)
 
     # ── Main loop ───────────────────────────────────────────────────────────
 
     def run(self):
-        T_max = max(self.config.training.n_rounds, 1)
         n_workers = self.config.training.n_workers
         sampling_rate = float(self.config.dp.sampling_rate)
-        logger.info("Trust-Aware D2B-DP: T_max=%d, n_workers=%d, layers=%d, ρ∈[%.3f,%.3f]",
-                    T_max, n_workers, len(self._layer_sizes),
-                    self.tc.rho_min, self.tc.rho_max)
+        logger.info("Trust-Aware D2B-DP: rounds=%d, n_workers=%d, layers=%d, ρ∈[%.3f,%.3f]",
+                    self.config.training.n_rounds, n_workers,
+                    len(self._layer_sizes), self.tc.rho_min, self.tc.rho_max)
 
         for t in range(self.config.training.n_rounds):
             active_ids = self._sample_active_nodes(t)
@@ -136,7 +123,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
             rho_t = min((1.0 + self.tc.beta * t) * self.tc.rho_min,
                         self.tc.rho_max)
 
-            # Phase 1: Capture W_old, train, build per-layer noisy packets.
+            # Phase 1: snapshot W_old, train, build per-layer noisy packets.
             W_old_map: Dict[int, torch.Tensor] = {}
             own_clipped: Dict[int, torch.Tensor] = {}
             packets: Dict[int, torch.Tensor] = {}
@@ -153,7 +140,8 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 atk = self.attack if (node.is_attacker and attack_active) else None
                 upd, _ = node.compute_update(
                     self.trainer, self.noise_mechanism, atk, apply_noise=False)
-                return node.id, upd / (-1 * self.trainer.lr)
+                # Spec sends actual delta ΔW = W_trained - W_old, not gradient.
+                return node.id, upd
 
             raw_updates: Dict[int, torch.Tensor] = {}
             if n_workers > 1:
@@ -167,20 +155,20 @@ class TrustAwareDFLSimulator(BaseSimulator):
                     if upd is not None:
                         raw_updates[nid] = upd
 
-            # Phase 2: per-layer clip + bounded Gaussian noise (sequential —
-            # mutates per-node clip_history).
+            # Phase 2: per-layer clip + Gaussian noise (sequential — mutates
+            # per-node clip_history FIFO).
             for node in self.nodes.values():
                 if node.id not in raw_updates:
                     continue
                 upd = raw_updates[node.id]
                 updates[node.id] = upd
-                oc, pkt, ssqs = self._build_packet(node, upd, rho_t, sampling_rate)
+                oc, pkt, ssqs = self._build_packet(node, upd, rho_t)
                 own_clipped[node.id] = oc
                 packets[node.id] = pkt
                 sigma_sq_map[node.id] = ssqs
             logger.debug("Round %d Phase 1+2: %.2fs", t, time.time() - t0)
 
-            # Phase 3+4: inbound eval + soft trust aggregation (active receivers).
+            # Phase 3+4: inbound eval + soft trust aggregation.
             tp_all = fp_all = fn_all = tn_all = 0
             per_node_det = {nid: (0, 0, 0, 0) for nid in self.nodes}
             node_agg_metrics: Dict[int, dict] = {nid: {} for nid in self.nodes}
@@ -189,7 +177,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 if node.id not in active_ids or node.id not in own_clipped:
                     continue
                 d_thr = self._compute_d_threshold(
-                    own_clipped[node.id], sigma_sq_map[node.id], t, T_max)
+                    own_clipped[node.id], sigma_sq_map[node.id], t)
                 received = {j: packets[j] for j in node.neighbors
                             if j in active_ids and j in packets}
                 result = self.aggregator.aggregate(
@@ -213,8 +201,9 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 per_node_det[node.id] = (tp, fp, fn, tn)
                 tp_all += tp; fp_all += fp; fn_all += fn; tn_all += tn
 
-            # Privacy ε reporting (heuristic): treat each round as one Gaussian
-            # mechanism step with unit-sensitivity z = sqrt(2/ρ_t).
+            # Privacy ε reporting (Step 2.3): one Gaussian round at
+            # z = √(2/ρ_t). Under sampling_rate=1.0 this reproduces
+            # ε^(t)(α) = α·ρ_t/4. Sub-sampling tightens via Opacus SGM.
             epsilon = 0.0
             if self.accountant is not None and rho_t > 0:
                 z_eff = math.sqrt(2.0 / max(rho_t, 1e-12))
