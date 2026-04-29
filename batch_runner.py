@@ -35,6 +35,7 @@ ATTACKS = ["none", "scale", "sign_flip", "alie", "gaussian_random", "label_flip"
 DATASETS = {
     "mnist": {"model": "mlp", "hidden_size": 100, "rounds": 100},
     "cifar10": {"model": "cnn", "hidden_size": 128, "rounds": 200},
+    "femnist": {"model": "mlp", "hidden_size": 200, "rounds": 100},
 }
 
 SEEDS = [42, 123, 456]

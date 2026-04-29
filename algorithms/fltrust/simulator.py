@@ -78,11 +78,15 @@ class FLTrustSimulator(DFLSimulator):
                 ]
                 if honest_steps:
                     avg_steps = sum(honest_steps) / len(honest_steps)
-                    q = min(self.config.training.batch_size /
-                            min(n.n_samples for n in self.nodes.values()
-                                if not n.is_attacker), 1.0)
+                    q_batch = min(self.config.training.batch_size /
+                                  min(n.n_samples for n in self.nodes.values()
+                                      if not n.is_attacker), 1.0)
+                    # Compose client-level Poisson subsampling with batch
+                    # subsampling per RDP standard (matches NoiseGame/TrustAware).
+                    q_client = max(min(float(self.config.dp.sampling_rate), 1.0), 0.0)
+                    q_composed = q_client * q_batch
                     self.accountant.step(
-                        int(avg_steps), q, self.config.dp.noise_mult
+                        int(avg_steps), q_composed, self.config.dp.noise_mult
                     )
                     epsilon = self.accountant.get_epsilon()
             # Phase 4: Log

@@ -55,16 +55,20 @@ class DFLSimulator(BaseSimulator):
             # Out-of-scope fix here — keep FLAME on per_step / none.
             epsilon = 0.0
             if self.accountant is not None:
+                # Client-level Poisson subsampling rate (q_client). Compose
+                # with batch subsampling for per_step mode per RDP standard.
+                q_client = max(min(float(self.config.dp.sampling_rate), 1.0), 0.0)
                 if self.config.dp.noise_mode == "post_training":
-                    # User-level DP: 1 noise application per round, no subsampling
-                    self.accountant.step(1, 1.0, self.config.dp.noise_mult)
+                    # User-level DP: 1 noise application per round at q_client.
+                    self.accountant.step(1, q_client, self.config.dp.noise_mult)
                 else:
-                    # per_step DP-SGD: K steps with Poisson subsampling q = B/n
+                    # per_step DP-SGD: K steps with composed q = q_client * q_batch
                     honest_steps = next(
                         s for nid, s in all_steps.items() if nid not in self.attacker_ids)
                     q_batch = self.config.training.batch_size / self.nodes[
                         self.config.topology.n_attackers].n_samples
-                    self.accountant.step(honest_steps, q_batch, self.config.dp.noise_mult)
+                    q_composed = q_client * q_batch
+                    self.accountant.step(honest_steps, q_composed, self.config.dp.noise_mult)
                 epsilon = self.accountant.get_epsilon()
 
             # Step 4: Evaluate + log

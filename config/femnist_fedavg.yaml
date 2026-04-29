@@ -1,0 +1,45 @@
+dataset:
+  name: femnist
+  split:
+    mode: dirichlet
+    alpha: 0.5
+
+model:
+  name: mlp
+  hidden_size: 200       # Bigger than MNIST (62 classes vs 10)
+
+topology:
+  n_nodes: 50            # Use 10-50 for typical experiments; up to 3500 supported
+  n_attackers: 5
+  n_neighbors: 10
+  seed: 42
+
+training:
+  n_rounds: 50
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+
+dp:
+  noise_mode: post_training
+  clip_bound: 2.0
+  noise_mult: 1.1
+  delta: 1.0e-5
+  epsilon_max: 10.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.5, 2, 3, 5, 10, 32, 64, 128, 256, 512, 1000]
+  sampling_rate: 1.0
+
+attack:
+  type: scale
+  scale_factor: 3.0
+  start_round: 0
+
+aggregation:
+  type: fedavg
+  params: {}
+
+output_dir: ./results
+seed: 42
