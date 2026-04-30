@@ -1,0 +1,45 @@
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    samples_per_node: 1200    # match dp_fedavg.yaml for distribution parity
+    alpha: 1.0
+
+model:
+  name: mlp
+  hidden_size: 32           # match dp_fedavg.yaml — re-measure for new model size
+
+topology:
+  n_nodes: 50
+  n_attackers: 0          # no attackers — measure clean gradient norms
+  n_neighbors: 30
+  seed: 42
+
+training:
+  n_rounds: 5             # measurement only; need ~5 rounds * 50 nodes for distribution
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.001
+  n_workers: 5
+
+dp:
+  noise_mode: none        # SKIP clip + SKIP noise → log raw gradient norms
+  delta: 1.0e-5
+  epsilon_max: 1.0e8
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.5, 2, 3, 5, 10, 32, 64, 128]
+  sampling_rate: 1.0
+
+attack:
+  type: scale
+  scale_factor: 1.0       # no-op (n_attackers=0 anyway)
+  start_round: 100        # never activates within 5 rounds
+
+aggregation:
+  type: fedavg
+  params: {}
+
+output_dir: ./results
+device: auto
+seed: 42

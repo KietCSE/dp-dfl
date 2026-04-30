@@ -2,12 +2,12 @@ dataset:
   name: mnist
   split:
     mode: iid
-    samples_per_node: 1200    # each node draws 3000 random samples from 60k pool (overlap)
+    samples_per_node: 3000    # each node draws 3000 random samples from 60k pool (overlap)
     alpha: 1.0                # ignored in iid mode
 
 model:
   name: mlp
-  hidden_size: 100
+  hidden_size: 32
 
 topology:
   n_nodes: 50
@@ -19,19 +19,21 @@ training:
   n_rounds: 50
   local_epochs: 1
   batch_size: 64
-  lr: 0.001
+  lr: 0.005
   n_workers: 5
 
 dp:
   noise_mode: post_training    # User-level DP: train SGD → clip final update → noise
-  clip_bound: 10.0
-  noise_mult: 0.001
+  # Tuned via dp_fedavg_measure.yaml: median update_norm (250 samples, hidden=32) = 0.0234
+  # noise_mult from scripts/solve_noise_mult.py for target eps=16 @ R=50, q=0.5
+  clip_bound: 0.0234           # data-driven, matches actual gradient distribution
+  noise_mult: 1.45             # gives eps≈16 (match Trust-Aware/Noise-Game)
   delta: 1.0e-5
-  epsilon_max: 100000000.0
+  epsilon_max: 20.0            # was 1e8 → real budget cap
   accountant: renyi_dpsgd
   accountant_params:
     alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
-  sampling_rate: 1.0  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
+  sampling_rate: 0.5  # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 
 attack:
   type: scale
