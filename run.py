@@ -156,6 +156,24 @@ build_trimmed_mean = build_dpsgd_kurtosis
 build_flame = build_dpsgd_kurtosis
 
 
+def build_cfl_fedavg(config, dataset_cls, model_cls, param_dim, tracker, device):
+    """CFL-DP-FedAvg: trusted server adds Gaussian noise post-aggregation.
+
+    Trainer must run plain SGD (noise_mode='none' in YAML). Server-side DP
+    is unconditional when noise_mult > 0; accountant is built regardless of
+    noise_mode so privacy can still be tracked.
+    """
+    from dpfl.algorithms.cfl_fedavg.simulator import CFLSimulator
+    noise_mechanism = NOISE_MECHANISMS["gaussian"]()
+    aggregator = AGGREGATORS["fedavg"]()  # placeholder; CFLSimulator self-aggregates
+    attack = _build_attack(config)
+    accountant = _build_accountant(config) if config.dp.noise_mult > 0 else None
+    return CFLSimulator(
+        config, dataset_cls, model_cls,
+        noise_mechanism, aggregator, attack,
+        accountant=accountant, tracker=tracker, device=device)
+
+
 def build_adaptive_noise(config, dataset_cls, model_cls, param_dim, tracker, device):
     import inspect
     from dpfl.algorithms.adaptive_noise.simulator import AdaptiveNoiseSimulator
@@ -238,6 +256,12 @@ ALGORITHMS = {
         "build_fn": build_dp_fedavg,
         "prefix": "dp_fedavg",
         "default_config": "config/dp_fedavg.yaml",
+    },
+    "cfl-fedavg": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_cfl_fedavg,
+        "prefix": "cfl_fedavg",
+        "default_config": "config/cfl_fedavg.yaml",
     },
     "trimmed-mean": {
         "config_cls": "dpfl.config.ExperimentConfig",

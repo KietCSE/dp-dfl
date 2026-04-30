@@ -1,0 +1,52 @@
+# Stress test: DFL-DP-FedAvg (LDP) at low-privacy budget eps=2
+# Pair config with cfl_fedavg_eps2.yaml — same hyperparams, different DP location
+# Goal: show DFL collapse vs CFL convergence at hard-noise regime
+
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    samples_per_node: 1200
+    alpha: 1.0
+
+model:
+  name: mlp
+  hidden_size: 32
+
+topology:
+  n_nodes: 50
+  n_attackers: 0
+  n_neighbors: 30             # DFL mesh peer-to-peer (different from CFL)
+  seed: 42
+
+training:
+  n_rounds: 50
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.005
+  n_workers: 5
+
+dp:
+  # DFL-LDP semantics: each client clips + noises before sending to neighbors.
+  noise_mode: post_training
+  clip_bound: 0.0234          # S — same as CFL pair
+  noise_mult: 7.7545          # z — same as CFL pair (apples-to-apples z, not eps)
+  delta: 1.0e-5
+  epsilon_max: 5.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 0.5
+
+attack:
+  type: scale
+  scale_factor: -10.0
+  start_round: 100
+
+aggregation:
+  type: fedavg
+  params: {}
+
+output_dir: ./results
+device: auto
+seed: 42

@@ -1,0 +1,51 @@
+# Stress test: CFL-DP-FedAvg at low-privacy budget eps=2
+# Goal: demonstrate CFL > DFL when noise is hard-dominant
+
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    samples_per_node: 1200
+    alpha: 1.0
+
+model:
+  name: mlp
+  hidden_size: 32
+
+topology:
+  n_nodes: 50
+  n_attackers: 0
+  n_neighbors: 0              # CFL: no client-client edges
+  seed: 42
+
+training:
+  n_rounds: 50
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.005
+  n_workers: 5
+
+dp:
+  # CFL semantics: trainer plain SGD, server clips + noises post-aggregation.
+  noise_mode: none
+  clip_bound: 0.0234          # S — same as standard run
+  noise_mult: 7.7545          # z — solved for eps=2 (5.3× more noise than eps=16)
+  delta: 1.0e-5
+  epsilon_max: 5.0            # cap to prevent over-budget
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 0.5
+
+attack:
+  type: scale
+  scale_factor: -10.0
+  start_round: 100            # never activates (clean run)
+
+aggregation:
+  type: fedavg
+  params: {}
+
+output_dir: ./results
+device: auto
+seed: 42

@@ -1,0 +1,48 @@
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    samples_per_node: 1200    # each node draws 1200 random samples from 60k pool
+    alpha: 1.0                # ignored in iid mode
+
+model:
+  name: mlp
+  hidden_size: 32
+
+topology:
+  n_nodes: 50
+  n_attackers: 0
+  n_neighbors: 0              # CFL: no client-client edges; server hub-and-spoke
+  seed: 42
+
+training:
+  n_rounds: 50
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.005
+  n_workers: 5
+
+dp:
+  # CFL semantics: trainer plain SGD, server clips + noises post-aggregation.
+  noise_mode: none            # MUST be 'none' for CFL — client does plain SGD
+  clip_bound: 0.0234          # S — bound on ‖Δ_k‖ from data measurement
+  noise_mult: 1.45            # z — solved via scripts/solve_noise_mult.py
+  delta: 1.0e-5
+  epsilon_max: 20.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 0.5          # q — Poisson client subsampling
+
+attack:
+  type: scale
+  scale_factor: -10.0
+  start_round: 20
+
+aggregation:
+  type: fedavg                # placeholder — CFLSimulator does its own server-side aggregation
+  params: {}
+
+output_dir: ./results
+device: auto
+seed: 42
