@@ -21,6 +21,8 @@ training:
   batch_size: 64
   lr: 0.001
   n_workers: 5
+  use_vectorized: true        # vmap path: ~30x speedup on GPU vs ThreadPool
+  vmap_chunk: 0               # 0 = no chunking (measurement only — small)
 
 dp:
   noise_mode: none        # SKIP clip + SKIP noise → log raw gradient norms

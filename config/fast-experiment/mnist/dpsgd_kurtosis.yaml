@@ -21,6 +21,8 @@ training:
   batch_size: 64
   lr: 0.01
   n_workers: 5
+  use_vectorized: true        # vmap path: nested vmap for per-step DP-SGD
+  vmap_chunk: 0               # 0 = no chunking (MLP fits at any N on 16GB)
 
 dp:
   noise_mode: per_step

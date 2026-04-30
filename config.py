@@ -39,6 +39,14 @@ class TrainingConfig:
     batch_size: int = 32
     lr: float = 0.1
     n_workers: int = 1
+    # Vectorized simulator: pack N clients into a (N, D) tensor and use
+    # torch.func.vmap for parallel forward/backward on GPU. Default False for
+    # backward compat; flip to True (in YAML) to enable 30x speedup at scale.
+    use_vectorized: bool = False
+    # vmap chunk: process clients in groups of this size to bound VRAM.
+    # 0 = no chunking (process all N at once; OK for MNIST MLP @ 500 on 16GB).
+    # For CIFAR CNN @ 500 set 50-100 to avoid OOM.
+    vmap_chunk: int = 0
 
 @dataclass
 class ModelConfig:

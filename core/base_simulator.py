@@ -25,6 +25,14 @@ from dpfl.core.base_attack import BaseAttack
 from dpfl.topology.random_graph import create_regular_graph
 from dpfl.core.dpsgd_trainer import DPSGDTrainer
 from dpfl.core.base_node import Node
+from dpfl.core.vectorized_state import (
+    ParamShapeSpec, pack_node_params, unpack_to_nodes,
+)
+from dpfl.core.vectorized_eval import vectorized_evaluate
+from dpfl.core.vectorized_data import VectorizedDataPipeline
+from dpfl.core.vectorized_trainer import (
+    train_all_standard, train_all_dpsgd_per_step,
+)
 
 
 class BaseSimulator(ABC):
@@ -56,6 +64,17 @@ class BaseSimulator(ABC):
         self.test_loader = None
         self.attacker_ids: set = set()
         self.param_dim: int = 0
+
+        # Vectorized state (populated in setup() if config.training.use_vectorized).
+        # base_model_template: stateless module for functional_call (no per-node copy).
+        # param_spec: pack/unpack between (N, D) and per-client param dicts.
+        # X_test, Y_test: pre-stacked test set on device for vmapped eval.
+        # train_pipeline: GPU-resident per-client training data with padding/mask.
+        self.base_model_template: BaseModel = None
+        self.param_spec: ParamShapeSpec = None
+        self.X_test: torch.Tensor = None
+        self.Y_test: torch.Tensor = None
+        self.train_pipeline: VectorizedDataPipeline = None
 
         # Isolated torch RNGs per purpose to prevent cross-algorithm state
         # drift. Same config.seed yields identical sequences for each purpose,
@@ -132,12 +151,55 @@ class BaseSimulator(ABC):
             data_gen=self.data_gen)
         self.test_loader = DataLoader(test_ds, batch_size=256, shuffle=False)
 
+        if getattr(self.config.training, "use_vectorized", False):
+            self._setup_vectorized(base_model, test_ds, node_data)
+
         logger.info("Setup complete: %d nodes (%d attackers), param_dim=%d, split=%s",
                      self.config.topology.n_nodes, len(self.attacker_ids),
                      self.param_dim, self.config.dataset.split.mode)
         logger.debug("Attacker IDs: %s", self.attacker_ids)
         if self.attack and hasattr(self.attack, 'wrap_dataset'):
             logger.info("Data poisoning active: %s", type(self.attack).__name__)
+
+    def _setup_vectorized(self, base_model: BaseModel, test_ds,
+                          node_data: Dict[int, "torch.utils.data.Subset"]) -> None:
+        """Init vectorized state: stateless template, ParamShapeSpec, test tensors,
+        per-client training pipeline.
+
+        We keep per-node `node.model` deepcopies for backward compat with
+        algorithm-specific simulators that read/write `node.model` directly
+        (e.g., aggregators, attacks). Vectorized methods repack from nodes
+        on demand so legacy paths that mutate node.model stay consistent.
+
+        node_data is the pre-wrap split (LabelFlip wrap happens after this in
+        setup()). Vectorized training falls back to legacy when label_flip
+        is active, so the unwrapped data here is correct for honest clients.
+        """
+        # Stateless template — keep on device, params will come from params_stack
+        self.base_model_template = copy.deepcopy(base_model).to(self.device)
+        self.param_spec = ParamShapeSpec(self.base_model_template)
+
+        # Pre-stack test data on device once (vectorized eval iterates this)
+        xs, ys = [], []
+        for x, y in DataLoader(test_ds, batch_size=512, shuffle=False, num_workers=0):
+            xs.append(x)
+            ys.append(y)
+        self.X_test = torch.cat(xs, dim=0).to(self.device)
+        self.Y_test = torch.cat(ys, dim=0).to(torch.long).to(self.device)
+
+        # Per-client training pipeline (GPU-resident). Uses data_gen for
+        # deterministic per-client shuffles in the same RNG order as legacy.
+        self.train_pipeline = VectorizedDataPipeline(
+            dataset=next(iter(node_data.values())).dataset,
+            node_data=node_data, device=self.device, data_gen=self.data_gen,
+        )
+
+        logger.info(
+            "Vectorized state ready: param_spec.D=%d, X_test=%s, "
+            "train clients N=%d, max_n_samples=%d",
+            self.param_spec.D, tuple(self.X_test.shape),
+            self.train_pipeline.N, self.train_pipeline.max_n_samples,
+        )
 
     @abstractmethod
     def _create_node(self, node_id, model, data, is_attacker) -> Node:
@@ -182,9 +244,45 @@ class BaseSimulator(ABC):
         return active
 
     def _train_all_nodes(self, apply_noise: bool = True, round_t: int = 0):
-        """Train all nodes in parallel. Returns (updates_dict, steps_dict).
-        Attackers only attack when round_t >= config.attack.start_round.
+        """Train all nodes. Returns (updates_dict, steps_dict).
+
+        Dispatches to vectorized vmap path when use_vectorized=True AND the
+        config is supported by Phase 2 (non-DP, non-data-poisoning); falls
+        back to the legacy ThreadPool/sequential path otherwise.
         """
+        if self._can_use_vectorized_training():
+            return self._train_all_nodes_vectorized(apply_noise, round_t)
+        return self._train_all_nodes_legacy(apply_noise, round_t)
+
+    def _can_use_vectorized_training(self) -> bool:
+        """Vectorized path supports:
+        - Phase 2: noise_mode='none' (FedAvg, Krum, Trimmed Mean, FLTrust, FLAME,
+                   Trust-Aware/NoiseGame Phase-1 SGD)
+        - Phase 3: noise_mode='per_step' (DP-FedAvg, DP-SGD+Kurtosis) — requires
+                   uniform per-client batch sizes (no Dirichlet padding)
+        - Phase 3: noise_mode='post_training' — clip+noise applied on (N, D)
+                   update after vectorized SGD
+        Falls back to legacy for: data poisoning (LabelFlip), or per_step DP
+        with non-uniform client sizes.
+        """
+        if not getattr(self.config.training, "use_vectorized", False):
+            return False
+        if self.train_pipeline is None or self.base_model_template is None:
+            return False
+        if self.attack is not None and hasattr(self.attack, "wrap_dataset"):
+            return False  # data poisoning needs wrapped Y; pipeline has clean Y
+        nm = self.config.dp.noise_mode
+        if nm == "per_step":
+            # Phase 3 requires uniform batch sizes (no padding mid-batch)
+            sizes = self.train_pipeline.client_sizes
+            if int(sizes.min().item()) != int(sizes.max().item()):
+                return False
+        elif nm not in ("none", "post_training"):
+            return False
+        return True
+
+    def _train_all_nodes_legacy(self, apply_noise: bool = True, round_t: int = 0):
+        """Legacy path: ThreadPool over per-client compute_update (kept for fallback)."""
         updates, steps = {}, {}
         n_workers = self.config.training.n_workers
         attack_active = round_t >= self.config.attack.start_round
@@ -220,8 +318,134 @@ class BaseSimulator(ABC):
 
         return updates, steps
 
+    def _train_all_nodes_vectorized(self, apply_noise: bool, round_t: int):
+        """Vectorized SGD/DP-SGD via vmap; attacker post-perturbation kept sequential.
+
+        Branches on config.dp.noise_mode:
+          - 'none'         -> plain SGD (Phase 2)
+          - 'per_step'     -> nested-vmap DP-SGD (Phase 3)
+          - 'post_training'-> plain SGD then clip+noise on (N, D) update
+        For DP modes, attacker rows skip clip+noise (model-poisoning bypasses DP).
+        """
+        ordered_nodes = [self.nodes[nid] for nid in sorted(self.nodes.keys())]
+        params_stack = pack_node_params(ordered_nodes, device=self.device)
+        chunk = int(getattr(self.config.training, "vmap_chunk", 0) or 0)
+        nm = self.config.dp.noise_mode
+        attack_active = round_t >= self.config.attack.start_round
+
+        # Mask of rows that are honest (or data-poisoning attackers — DP still applies)
+        honest_mask = torch.ones(len(ordered_nodes), dtype=torch.bool,
+                                  device=self.device)
+        is_data_poisoning = self.attack is not None \
+            and hasattr(self.attack, "wrap_dataset")
+        if attack_active and self.attack is not None and not is_data_poisoning:
+            for i, node in enumerate(ordered_nodes):
+                if node.is_attacker:
+                    honest_mask[i] = False  # skip DP for model-poisoning rows
+
+        if nm == "per_step" and apply_noise:
+            updates_stack, steps_dict = train_all_dpsgd_per_step(
+                base_model=self.base_model_template,
+                params_stack=params_stack,
+                spec=self.param_spec,
+                train_pipeline=self.train_pipeline,
+                mechanism=self.noise_mechanism,
+                batch_size=self.config.training.batch_size,
+                epochs=self.config.training.local_epochs,
+                lr=self.config.training.lr,
+                clip_bound=self.config.dp.clip_bound,
+                noise_mult=self.config.dp.noise_mult,
+                chunk_size=chunk,
+            )
+            # Attacker rows: re-train with plain SGD (skip DP) so they can craft
+            # an arbitrary update before perturb is applied.
+            if (~honest_mask).any():
+                plain_updates, _ = train_all_standard(
+                    base_model=self.base_model_template,
+                    params_stack=params_stack, spec=self.param_spec,
+                    train_pipeline=self.train_pipeline,
+                    batch_size=self.config.training.batch_size,
+                    epochs=self.config.training.local_epochs,
+                    lr=self.config.training.lr, chunk_size=chunk,
+                )
+                # Replace attacker rows with plain SGD updates
+                updates_stack = torch.where(
+                    honest_mask.unsqueeze(1), updates_stack, plain_updates,
+                )
+        else:
+            updates_stack, steps_dict = train_all_standard(
+                base_model=self.base_model_template,
+                params_stack=params_stack,
+                spec=self.param_spec,
+                train_pipeline=self.train_pipeline,
+                batch_size=self.config.training.batch_size,
+                epochs=self.config.training.local_epochs,
+                lr=self.config.training.lr,
+                chunk_size=chunk,
+            )
+            if nm == "post_training" and apply_noise:
+                # Each (D,) update is treated as one "sample" (B=1). Sensitivity
+                # = C, sigma = z*C; matches the legacy single-client formula.
+                # Attacker (model-poisoning) rows bypass DP so they can craft
+                # an arbitrary update — same as legacy skip_dp behavior.
+                clip = self.config.dp.clip_bound
+                noised = self.noise_mechanism.clip_and_noise_batched(
+                    updates_stack.unsqueeze(1), clip,
+                    self.config.dp.noise_mult, batch_size=1,
+                )
+                updates_stack = torch.where(
+                    honest_mask.unsqueeze(1), noised, updates_stack,
+                )
+
+        # Sync post-training params back to nodes so aggregators that read
+        # node.model.get_flat_params() see the trained state.
+        post_params = params_stack + updates_stack
+        unpack_to_nodes(post_params, ordered_nodes)
+
+        updates = {
+            node.id: updates_stack[i] for i, node in enumerate(ordered_nodes)
+        }
+
+        # Model-poisoning attackers: perturb update + resync node.model.
+        attack_active = round_t >= self.config.attack.start_round
+        if attack_active and self.attack is not None \
+                and not hasattr(self.attack, "wrap_dataset"):
+            for i, node in enumerate(ordered_nodes):
+                if node.is_attacker:
+                    perturbed = self.attack.perturb(updates[node.id], context=None)
+                    updates[node.id] = perturbed
+                    node.model.set_flat_params(params_stack[i] + perturbed)
+
+        # ALIE post-pass identical to legacy (operates on updates dict).
+        if attack_active and self.attack is not None:
+            from dpfl.core.alie_attack import ALIEAttack
+            if isinstance(self.attack, ALIEAttack):
+                # Map node_id -> stack index for resync
+                idx_of = {n.id: i for i, n in enumerate(ordered_nodes)}
+                for node in ordered_nodes:
+                    if node.is_attacker and node.id in updates:
+                        nbr_updates = {
+                            nid: updates[nid] for nid in node.neighbors
+                            if nid in updates and nid not in self.attacker_ids
+                        }
+                        context = {"neighbor_updates": nbr_updates}
+                        new_upd = self.attack.perturb(updates[node.id], context=context)
+                        updates[node.id] = new_upd
+                        node.model.set_flat_params(
+                            params_stack[idx_of[node.id]] + new_upd)
+
+        return updates, steps_dict
+
     def _evaluate_nodes(self) -> Dict[int, Dict[str, float]]:
-        """Evaluate accuracy and test loss for all nodes on global test set."""
+        """Evaluate accuracy and test loss for all nodes on global test set.
+
+        Dispatches to vmapped path if config.training.use_vectorized, else the
+        legacy sequential loop. Output dict shape is identical either way.
+        """
+        if getattr(self.config.training, "use_vectorized", False) \
+                and self.base_model_template is not None:
+            return self._evaluate_nodes_vectorized()
+
         results = {}
         for nid, node in self.nodes.items():
             correct, total, total_loss = 0, 0, 0.0
@@ -239,6 +463,27 @@ class BaseSimulator(ABC):
                 "test_loss": total_loss / total if total else 0.0,
             }
         return results
+
+    def _evaluate_nodes_vectorized(self) -> Dict[int, Dict[str, float]]:
+        """vmap forward over all client models on shared test set in one pass.
+
+        Repacks params_stack from nodes (cheap) so it picks up any post-aggregation
+        updates the algorithm-specific simulator made to node.model.
+        """
+        ordered_nodes = [self.nodes[nid] for nid in sorted(self.nodes.keys())]
+        node_ids = [n.id for n in ordered_nodes]
+        params_stack = pack_node_params(ordered_nodes, device=self.device)
+        chunk = int(getattr(self.config.training, "vmap_chunk", 0) or 0)
+        return vectorized_evaluate(
+            base_model=self.base_model_template,
+            params_stack=params_stack,
+            spec=self.param_spec,
+            node_ids=node_ids,
+            X_test=self.X_test,
+            Y_test=self.Y_test,
+            batch_size=256,
+            chunk_size=chunk,
+        )
 
     def _compute_detection(self, flagged_ids, clean_ids, neighbors,
                            attack_active: bool = True):

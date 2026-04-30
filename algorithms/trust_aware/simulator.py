@@ -134,26 +134,39 @@ class TrustAwareDFLSimulator(BaseSimulator):
             for node in self.nodes.values():
                 W_old_map[node.id] = node.model.get_flat_params().clone()
 
-            def _train(node):
-                if node.id not in active_ids:
-                    return node.id, None
-                atk = self.attack if (node.is_attacker and attack_active) else None
-                upd, _ = node.compute_update(
-                    self.trainer, self.noise_mechanism, atk, apply_noise=False)
-                # Spec sends actual delta ΔW = W_trained - W_old, not gradient.
-                return node.id, upd
-
             raw_updates: Dict[int, torch.Tensor] = {}
-            if n_workers > 1:
-                with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                    for nid, upd in pool.map(_train, self.nodes.values()):
+            if self._can_use_vectorized_training():
+                # Phase 5a: vectorized vmap'd SGD over all clients in one pass.
+                # noise_mode='none' for Trust-Aware (self-managed DP via Phase 2),
+                # so apply_noise is a no-op here. Attack perturbation is applied
+                # inside _train_all_nodes_vectorized for model-poisoning rows.
+                # We still keep only active_ids — train cost is amortized but
+                # we filter to match the legacy raw_updates contract.
+                all_updates, _ = self._train_all_nodes_vectorized(
+                    apply_noise=False, round_t=t)
+                raw_updates = {
+                    nid: u for nid, u in all_updates.items() if nid in active_ids
+                }
+            else:
+                def _train(node):
+                    if node.id not in active_ids:
+                        return node.id, None
+                    atk = self.attack if (node.is_attacker and attack_active) else None
+                    upd, _ = node.compute_update(
+                        self.trainer, self.noise_mechanism, atk, apply_noise=False)
+                    # Spec sends actual delta ΔW = W_trained - W_old.
+                    return node.id, upd
+
+                if n_workers > 1:
+                    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                        for nid, upd in pool.map(_train, self.nodes.values()):
+                            if upd is not None:
+                                raw_updates[nid] = upd
+                else:
+                    for node in self.nodes.values():
+                        nid, upd = _train(node)
                         if upd is not None:
                             raw_updates[nid] = upd
-            else:
-                for node in self.nodes.values():
-                    nid, upd = _train(node)
-                    if upd is not None:
-                        raw_updates[nid] = upd
 
             # Phase 2: per-layer clip + Gaussian noise (sequential — mutates
             # per-node clip_history FIFO).
