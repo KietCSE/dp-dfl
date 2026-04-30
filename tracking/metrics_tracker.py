@@ -98,7 +98,17 @@ class MetricsTracker:
             f"Attack-active rounds:       {n_attack}  (from round {start_round})",
             f"Final accuracy:             {last.get('accuracy', 0):.4f}",
             f"Final test loss:            {last.get('test_loss', 0):.4f}",
-            f"Final epsilon:              {last.get('epsilon', 0):.2f}",
+        ]
+        # Show eps_max + eps_avg side-by-side when both present (heterogeneous
+        # per-node DP); otherwise fall back to single Final epsilon line.
+        if "eps_avg" in last:
+            lines += [
+                f"Final epsilon (max honest): {last.get('epsilon', 0):.2f}",
+                f"Final epsilon (avg honest): {last.get('eps_avg', 0):.2f}",
+            ]
+        else:
+            lines.append(f"Final epsilon:              {last.get('epsilon', 0):.2f}")
+        lines += [
             f"Best alpha:                 {last.get('best_alpha', 'N/A')}",
             f"Avg precision:              {avg_attack('precision'):.4f}",
             f"Avg recall:                 {avg_attack('recall'):.4f}",
@@ -228,15 +238,47 @@ class MetricsTracker:
 
     def plot_privacy_budget(self, filename: str = "epsilon.png"):
         rounds = [r["round"] for r in self.rounds if "epsilon" in r]
-        eps = [r["epsilon"] for r in self.rounds if "epsilon" in r]
+        eps_max = [r["epsilon"] for r in self.rounds if "epsilon" in r]
         if not rounds:
             return
         plt.figure(figsize=(10, 6))
-        plt.plot(rounds, eps, color="purple")
+        plt.plot(rounds, eps_max, color="purple")
         plt.xlabel("Round"); plt.ylabel("Epsilon")
         plt.title("Privacy Budget Over Rounds")
         plt.grid(True, alpha=0.3)
         plt.savefig(self.output_dir / filename, dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # Heterogeneous-DP algorithms (noise_game / trust_aware / adaptive_noise)
+        # log per-node ε then collapse to (max, avg, std). Emit dedicated plots
+        # so users can inspect worst-case vs mean-case at a glance.
+        if not any("eps_avg" in r for r in self.rounds):
+            return
+        eps_avg = [r.get("eps_avg", 0.0) for r in self.rounds if "epsilon" in r]
+        eps_std = [r.get("eps_std", 0.0) for r in self.rounds if "epsilon" in r]
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(rounds, eps_max, color="crimson",
+                 label="eps_max (worst honest)")
+        plt.xlabel("Round"); plt.ylabel("Epsilon")
+        plt.title("Worst-case Privacy Budget (eps_max)")
+        plt.legend(); plt.grid(True, alpha=0.3)
+        plt.savefig(self.output_dir / "epsilon_max.png",
+                    dpi=150, bbox_inches="tight")
+        plt.close()
+
+        plt.figure(figsize=(10, 6))
+        lower = [a - s for a, s in zip(eps_avg, eps_std)]
+        upper = [a + s for a, s in zip(eps_avg, eps_std)]
+        plt.fill_between(rounds, lower, upper, alpha=0.2,
+                         color="steelblue", label="±std")
+        plt.plot(rounds, eps_avg, color="steelblue", linewidth=2,
+                 label="eps_avg")
+        plt.xlabel("Round"); plt.ylabel("Epsilon")
+        plt.title("Mean Privacy Budget (eps_avg ± std, honest)")
+        plt.legend(); plt.grid(True, alpha=0.3)
+        plt.savefig(self.output_dir / "epsilon_avg.png",
+                    dpi=150, bbox_inches="tight")
         plt.close()
 
     def plot_kurtosis(self, filename: str = "kurtosis.png"):

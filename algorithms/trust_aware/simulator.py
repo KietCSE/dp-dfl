@@ -54,6 +54,12 @@ class TrustAwareDFLSimulator(BaseSimulator):
         if hasattr(self.gaussian_noise, "set_generator"):
             self.gaussian_noise.set_generator(self.noise_gen)
         self._layer_sizes: List[int] = []
+        # Per-node RDP accountants — required for honest reporting under
+        # heterogeneous per-layer-per-node clip & noise. Even though the
+        # noise multiplier z_eff = √(2/ρ_t) is nominally uniform, we track
+        # per-node so future per-node z variants drop in cleanly. Per-layer
+        # composition is applied via n_steps=L (number of model layers).
+        self._per_node_acc = {}
 
     def _create_node(self, node_id, model, data, is_attacker):
         return TrustAwareNode(node_id, model, data, is_attacker, self.tc)
@@ -214,15 +220,34 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 per_node_det[node.id] = (tp, fp, fn, tn)
                 tp_all += tp; fp_all += fp; fn_all += fn; tn_all += tn
 
-            # Privacy ε reporting (Step 2.3): one Gaussian round at
-            # z = √(2/ρ_t). Under sampling_rate=1.0 this reproduces
-            # ε^(t)(α) = α·ρ_t/4. Sub-sampling tightens via Opacus SGM.
+            # Privacy ε reporting (Step 2.3): per-layer Gaussian → L
+            # sequential SGM applications per round (RDP composes additively).
+            # Per-node accountant tracks each honest node's cumulative cost;
+            # ε reported as max(ε_k) for guarantee + avg(ε_k) for diagnostic.
             epsilon = 0.0
+            eps_avg = 0.0
+            per_node_eps: Dict[int, float] = {}
             if self.accountant is not None and rho_t > 0:
+                from dpfl.core.renyi_accountant import RenyiAccountant
                 z_eff = math.sqrt(2.0 / max(rho_t, 1e-12))
-                self.accountant.step(
-                    n_steps=1, sampling_rate=sampling_rate, noise_mult=z_eff)
-                epsilon = self.accountant.get_epsilon()
+                L = max(len(self._layer_sizes), 1)  # # layers per Gaussian round
+                for nid, node in self.nodes.items():
+                    if node.is_attacker:
+                        continue
+                    acc = self._per_node_acc.get(nid)
+                    if acc is None:
+                        acc = RenyiAccountant(
+                            alpha_list=self.accountant.alpha_list,
+                            delta=self.accountant.delta)
+                        self._per_node_acc[nid] = acc
+                    # Per-layer composition: L Gaussian mechanisms per round
+                    acc.step(n_steps=L, sampling_rate=sampling_rate,
+                             noise_mult=z_eff)
+                    per_node_eps[nid] = acc.get_epsilon()
+
+                if per_node_eps:
+                    epsilon = max(per_node_eps.values())
+                    eps_avg = float(np.mean(list(per_node_eps.values())))
 
             # Trust diagnostics — split by recipient role (honest vs attacker).
             t_h, t_a = [], []
@@ -232,10 +257,20 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 for j, tv in n.trust_scores.items():
                     (t_a if j in self.attacker_ids else t_h).append(tv)
 
+            # Per-node ε for node_data export
+            extra_node_data = {nid: {"eps_n": e}
+                               for nid, e in per_node_eps.items()}
+
+            eps_std = (float(np.std(list(per_node_eps.values())))
+                       if per_node_eps else 0.0)
+
             self._log_round(
                 t, epsilon, updates, per_node_det, node_agg_metrics,
                 tp_all, fp_all, fn_all, tn_all,
+                extra_node_data=extra_node_data,
                 extra_round_metrics={
+                    "eps_avg": eps_avg,
+                    "eps_std": eps_std,
                     "rho_t": float(rho_t),
                     "trust_toward_honest": float(np.mean(t_h)) if t_h else 0.0,
                     "trust_toward_attacker": float(np.mean(t_a)) if t_a else 0.0,

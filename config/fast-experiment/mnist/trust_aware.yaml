@@ -19,7 +19,7 @@ training:
     n_rounds: 50
     local_epochs: 1
     batch_size: 64
-    lr: 0.001
+    lr: 0.005
     n_workers: 5
     use_vectorized: true        # vmap path: speeds up Phase 1 training (Phase 2 per-layer clip+noise stays sequential)
     vmap_chunk: 0               # 0 = no chunking (MLP fits at any N on 16GB)
@@ -63,7 +63,7 @@ dp:
 attack:
     type: scale
     scale_factor: -10.0
-    start_round: 20
+    start_round: 99
 
 aggregation:
     type: trust_aware_d2b
@@ -73,9 +73,9 @@ trust:
     # Step 2.1 — adaptive clip
     k: 5
     # Step 2.2 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
-    rho_min: 0.1
+    rho_min: 0.5
     rho_max: 10.0
-    beta: 0.05
+    beta: 0.5
     # Step 3.3 — anomaly threshold
     theta: 1.2
     gamma: 3.0
@@ -84,7 +84,7 @@ trust:
     alpha_T: 0.85
     trust_init: 1.0
     # Step 4.3 — softmax aggregation + momentum
-    T_min: 0.4
+    T_min: 0.5
     beta_soft: 8.0
     beta_m: 0.9
 

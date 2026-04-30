@@ -33,6 +33,11 @@ class NoiseGameDFLSimulator(BaseSimulator):
         # Wire isolated RNG into the strategic noise mechanism.
         if hasattr(self.game_mechanism, "set_generator"):
             self.game_mechanism.set_generator(self.noise_gen)
+        # Per-node RDP accountants — handles σ_k heterogeneity (game-derived
+        # σ varies per node based on trust). Each node gets its own
+        # RenyiAccountant; ε is reported as max + avg across honest nodes.
+        # Lazily populated on first round (after self.nodes setup).
+        self._per_node_acc = {}
 
     def _create_node(self, node_id, model, data, is_attacker):
         node = NoiseGameNode(node_id, model, data, is_attacker, self.ng)
@@ -149,43 +154,77 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 per_node_detection[node.id] = (tp, fp, fn, tn)
                 total_tp += tp; total_fp += fp; total_fn += fn; total_tn += tn
 
-            # Phase 4: Privacy accounting
-            # After Bug #7 fix: n_DP is pure Gaussian N(0, σ_DP²·I).
-            # After Bug #9 fix: account for n_strat dependency on g via
-            # Lipschitz-inflated sensitivity C_total = C·(1 + L_strat),
-            # L_strat = 2·β_strat·z, z = σ_DP/C. This makes ε reported
-            # rigorous (no manual inflation correction needed at publish).
-            # Bug #6 fix retained: q_composed = q_client · q_batch.
+            # Phase 4: Per-node privacy accounting (handles σ_k heterogeneity).
+            # Each honest node has its own σ_DP from the game mechanism →
+            # accumulate RDP cost into a node-specific RenyiAccountant.
+            # After Bug #7: n_DP is pure Gaussian N(0, σ_DP²·I).
+            # After Bug #9: Lipschitz inflation C_total = C·(1+L_strat),
+            #   L_strat = 2·β_strat·z, z = σ_DP/C — applied per-node.
+            # Bug #6: q_composed = q_client · q_batch (shared across nodes).
             avg_sigma_dp = (float(np.mean(list(sigma_dps.values())))
                             if sigma_dps else 0.0)
-            epsilon = 0.0
+            epsilon = 0.0     # eps_max (worst honest)
+            eps_avg = 0.0     # eps_avg (mean across honest)
+            per_node_eps: dict = {}
             if self.accountant is not None:
+                from dpfl.core.renyi_accountant import RenyiAccountant
                 honest_steps = next(
                     s for nid, s in all_steps.items() if nid not in self.attacker_ids)
                 q_batch = self.config.training.batch_size / self.nodes[
                     self.config.topology.n_attackers].n_samples
                 q_client = max(min(float(self.config.dp.sampling_rate), 1.0), 0.0)
                 q_composed = q_client * q_batch
-                sigma_for_acct = (avg_sigma_dp if avg_sigma_dp > 0
-                                  else self.game_mechanism._sigma_floor)
-                # Bug #9 fix (Lipschitz inflation): pass C_total instead of C
-                # to Opacus so RDP_α = α·C_total²/(2σ²) — rigorous bound that
-                # accounts for n_strat(g) dependency on raw gradient.
-                z = sigma_for_acct / max(C, 1e-12)
-                L_strat = 2.0 * self.ng.beta_strat * z
-                C_total = C * (1.0 + L_strat)
-                effective_mult = max(sigma_for_acct / (C_total + 1e-12), 0.01)
-                self.accountant.step(honest_steps, q_composed, effective_mult)
-                epsilon = self.accountant.get_epsilon()
+
+                # Charge RDP cost only for ACTIVE honest nodes this round.
+                # Inactive honest don't have a game-derived σ this round →
+                # skip their accountant.step (cumulative ε stays put). Still
+                # report their current cumulative ε in per_node_eps so the
+                # round-level max/avg reflects all honest users.
+                for nid, node in self.nodes.items():
+                    if node.is_attacker:
+                        continue
+
+                    if nid in sigma_dps and sigma_dps[nid] > 0:
+                        sigma_node = sigma_dps[nid]
+                        z_node = sigma_node / max(C, 1e-12)
+                        L_strat_node = 2.0 * self.ng.beta_strat * z_node
+                        C_total_node = C * (1.0 + L_strat_node)
+                        eff_mult_node = max(
+                            sigma_node / (C_total_node + 1e-12), 0.01)
+
+                        # Lazy-create per-node accountant on first active round.
+                        acc = self._per_node_acc.get(nid)
+                        if acc is None:
+                            acc = RenyiAccountant(
+                                alpha_list=self.accountant.alpha_list,
+                                delta=self.accountant.delta)
+                            self._per_node_acc[nid] = acc
+                        acc.step(honest_steps, q_composed, eff_mult_node)
+
+                    # Read cumulative ε (active just stepped; inactive: stale
+                    # or 0 if never been active before).
+                    acc = self._per_node_acc.get(nid)
+                    eps_n = acc.get_epsilon() if acc is not None else 0.0
+                    per_node_eps[nid] = eps_n
+                    extra_node.setdefault(nid, {})["eps_n"] = eps_n
+
+                if per_node_eps:
+                    epsilon = max(per_node_eps.values())
+                    eps_avg = float(np.mean(list(per_node_eps.values())))
 
             # Phase 5: Evaluate + log
-            honest_trust = [m["trust"] for m in extra_node.values()]
-            honest_nsr = [m["nsr"] for m in extra_node.values()]
+            honest_trust = [m["trust"] for m in extra_node.values()
+                            if "trust" in m]
+            honest_nsr = [m.get("nsr", 0.0) for m in extra_node.values()]
+            eps_std = (float(np.std(list(per_node_eps.values())))
+                       if per_node_eps else 0.0)
             self._log_round(
                 t, epsilon, final_updates, per_node_detection, node_agg_metrics,
                 total_tp, total_fp, total_fn, total_tn,
                 extra_node_data=extra_node,
                 extra_round_metrics={
+                    "eps_avg": eps_avg,
+                    "eps_std": eps_std,
                     "avg_trust": float(np.mean(honest_trust)) if honest_trust else 0.0,
                     "avg_sigma_dp_precap": avg_sigma_dp,           # diagnostic
                     "avg_n_dp_norm_postcap": float(np.mean(
@@ -195,7 +234,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 })
 
             if self.accountant is not None and epsilon > self.config.dp.epsilon_max:
-                logger.warning("Round %3d/%d | Budget exceeded (eps=%.2f)",
+                logger.warning("Round %3d/%d | Budget exceeded (eps_max=%.2f)",
                                t + 1, self.config.training.n_rounds, epsilon)
                 break
 

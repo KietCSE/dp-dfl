@@ -565,10 +565,18 @@ class BaseSimulator(ABC):
             self.tracker.log_round(**round_metrics)
             self.tracker.log_node_round(t, nodes_data)
 
+        # When extra_round_metrics carries eps_avg (per-node heterogeneous DP),
+        # show both max and avg in the console line so users see worst-case +
+        # mean-case at a glance.
+        eps_avg_metric = (extra_round_metrics or {}).get("eps_avg")
+        if eps_avg_metric is not None:
+            eps_str = f"eps_max: {epsilon:.2f} eps_avg: {float(eps_avg_metric):.2f}"
+        else:
+            eps_str = f"eps: {epsilon:.2f}"
         round_msg = (
             f"Round {t + 1:3d}/{self.config.training.n_rounds} | "
             f"Acc: {accuracy:.4f} | Loss: {test_loss:.4f} | "
-            f"eps: {epsilon:.2f} | P: {precision:.2f} R: {recall:.2f} F1: {f1:.2f}")
+            f"{eps_str} | P: {precision:.2f} R: {recall:.2f} F1: {f1:.2f}")
         logger.info(round_msg)
 
         # Debug: per-node norms

@@ -1,42 +1,54 @@
+# Measure config — derive clip_bound from clean gradient norm distribution.
+# MUST match dp_fedavg.yaml exactly (model/topology/training params) so the
+# measured median represents the actual gradient distribution at production.
+#
+# Workflow:
+#   1. Run this config (no DP noise, no clip):
+#        python run.py -a dp-fedavg config/fast-experiment/mnist/dp_fedavg_measure.yaml
+#   2. Take median of `mean_update_norm_honest` from results/.../metrics.csv:
+#        python -c "import csv; rows=list(csv.DictReader(open('<RUN>/metrics.csv')));
+#                   print(sorted(float(r['mean_update_norm_honest']) for r in rows)[len(rows)//2])"
+#   3. Set that value as `clip_bound` in dp_fedavg.yaml.
+
 dataset:
   name: mnist
   split:
     mode: iid
-    samples_per_node: 1200    # match dp_fedavg.yaml for distribution parity
+    samples_per_node: 1200      # match dp_fedavg.yaml
     alpha: 1.0
 
 model:
   name: mlp
-  hidden_size: 32           # match dp_fedavg.yaml — re-measure for new model size
+  hidden_size: 32               # match dp_fedavg.yaml
 
 topology:
-  n_nodes: 50
-  n_attackers: 0          # no attackers — measure clean gradient norms
-  n_neighbors: 30
+  n_nodes: 50                   # match dp_fedavg.yaml
+  n_attackers: 0                # no attackers — measure clean honest gradient norms
+  n_neighbors: 30               # match dp_fedavg.yaml
   seed: 42
 
 training:
-  n_rounds: 5             # measurement only; need ~5 rounds * 50 nodes for distribution
+  n_rounds: 5                   # measurement only — 5 × 50 = 250 sample points enough
   local_epochs: 1
   batch_size: 64
-  lr: 0.001
+  lr: 0.005                     # MUST match dp_fedavg.yaml — update_norm scales with lr
   n_workers: 5
-  use_vectorized: true        # vmap path: ~30x speedup on GPU vs ThreadPool
-  vmap_chunk: 0               # 0 = no chunking (measurement only — small)
+  use_vectorized: true          # vmap path: fast measure even on CPU
+  vmap_chunk: 0
 
 dp:
-  noise_mode: none        # SKIP clip + SKIP noise → log raw gradient norms
+  noise_mode: none              # SKIP clip + SKIP noise → log raw gradient norms
   delta: 1.0e-5
   epsilon_max: 1.0e8
   accountant: renyi_dpsgd
   accountant_params:
     alpha_list: [1.5, 2, 3, 5, 10, 32, 64, 128]
-  sampling_rate: 1.0
+  sampling_rate: 1.0            # all clients active (more samples for distribution)
 
 attack:
   type: scale
-  scale_factor: 1.0       # no-op (n_attackers=0 anyway)
-  start_round: 100        # never activates within 5 rounds
+  scale_factor: 1.0
+  start_round: 100              # never activates within 5 rounds
 
 aggregation:
   type: fedavg
