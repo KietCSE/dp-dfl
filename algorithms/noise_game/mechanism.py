@@ -134,10 +134,31 @@ class NoiseGameMechanism:
         Returns sigma_DP >= sigma_floor (DP guarantee).
         """
         base = self.sigma_0 * math.exp(-self.anneal_kappa * round_t)
-        # Bug #2 fix: convert RDP → (ε, δ)-DP before comparing to epsilon_max.
-        eps_consumed = self.compute_eps_dp()
-        eps_remain = max(0.0, self.epsilon_max - eps_consumed)
-        budget_factor = max(0.05, eps_remain / max(self.epsilon_max, 1e-12))
+        # Bug #10 fix: gate budget on RDP_α (same unit as rdp_spent), not on
+        # the (ε, δ)-DP value from compute_eps_dp(). The Mironov 2017 offset
+        # log(1/δ)/(α-1) is a constant upper-bound term that's already
+        # included in compute_eps_dp() even when rdp_spent=0. Comparing it
+        # against epsilon_max as if it were "ε consumed" makes budget_factor
+        # collapse to its 0.05 floor from round 0 whenever
+        # epsilon_max < log(1/δ)/(α-1) (e.g. MNIST: ε_max=8 < 11.51 for
+        # δ=1e-5, α=2). Result: sigma_dp is pinned to sigma_floor regardless
+        # of sigma_0 → sigma_0 becomes a dead parameter. The fix converts
+        # epsilon_max into the equivalent RDP budget and compares on that
+        # axis instead.
+        if self.alpha_rd <= 1.0:
+            budget_factor = 1.0
+        else:
+            rdp_max = self.epsilon_max - math.log(
+                1.0 / self.delta) / (self.alpha_rd - 1.0)
+            if rdp_max <= 0.0:
+                # alpha_rd too small to ever reach epsilon_max via single-α
+                # conversion; skip gating and let sigma_floor enforce the DP
+                # guarantee. Outer Opacus accountant uses multi-α anyway, so
+                # this only affects the heuristic scheduler.
+                budget_factor = 1.0
+            else:
+                rdp_remain = max(0.0, rdp_max - self.rdp_spent)
+                budget_factor = max(0.05, rdp_remain / rdp_max)
         threat_factor = 1.0 + attack_signal
         return max(base * budget_factor * threat_factor, self._sigma_floor)
 

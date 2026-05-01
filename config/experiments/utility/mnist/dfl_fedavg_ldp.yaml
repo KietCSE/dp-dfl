@@ -1,10 +1,10 @@
-# DFL DP-FedAvg standard baseline — utility experiment under no-attack scenario.
+# DFL DP-FedAvg standard baseline ?~@~T utility experiment under no-attack scenario.
 
 dataset:
   name: mnist
   split:
     mode: iid
-    samples_per_node: 2000
+    samples_per_node: 7000
     alpha: 1.0
 
 model:
@@ -12,13 +12,13 @@ model:
   hidden_size: 32
 
 topology:
-  n_nodes: 300
+  n_nodes: 500
   n_attackers: 0
-  n_neighbors: 150
+  n_neighbors: 200
   seed: 42
 
 training:
-  n_rounds: 50
+  n_rounds: 300
   local_epochs: 1
   batch_size: 64
   lr: 0.01
@@ -29,18 +29,18 @@ training:
 dp:
   noise_mode: post_training
   clip_bound: 0.0234
-  noise_mult: 1.45              # gives ε≈16 over 50 rounds
+  noise_mult: 0.9             # gives ε?~I~H16 over 50 rounds
   delta: 1.0e-5
-  epsilon_max: 16.5
+  epsilon_max: 8.0
   accountant: renyi_dpsgd
   accountant_params:
     alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
-  sampling_rate: 0.1
+  sampling_rate: 0.05
 
 attack:
   type: scale
   scale_factor: -10.0
-  start_round: 99999            # never activates — utility-only run
+  start_round: 99999            # never activates ?~@~T utility-only run
 
 aggregation:
   type: fedavg

@@ -44,7 +44,7 @@ dp:
 attack:
   type: scale
   scale_factor: -10.0
-  start_round: 10
+  start_round: 99
 
 # Alternative attack: Label Flipping (data poisoning)
 # attack:

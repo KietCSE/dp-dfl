@@ -147,20 +147,41 @@ Hệ dùng **2 RDP counter độc lập** với mục đích khác nhau:
 
 | Counter | Vai trò | Cập nhật | Vị trí |
 |---|---|---|---|
-| **Internal** (`mechanism.rdp_spent`) | Heuristic cho adaptive scheduler quyết định `σ_DP,t` | 1 lần/round qua `commit_round_rdp(avg_σ_dp)` | [mechanism.py:21–32](mechanism.py#L21-L32), [simulator.py:115–120](simulator.py#L115-L120) |
-| **Outer** (`RenyiAccountant`) | Privacy auditing chính thức (Opacus SGM tight bound) | 1 lần/round qua `accountant.step()` | [renyi_accountant.py](../../core/renyi_accountant.py), [simulator.py:152–167](simulator.py#L152-L167) |
+| **Internal** (`mechanism.rdp_spent`) | Heuristic cho adaptive scheduler quyết định `σ_DP,t` | 1 lần/round qua `commit_round_rdp(avg_σ_dp)` | [mechanism.py:21–32](mechanism.py#L21-L32), [simulator.py:126–128](simulator.py#L126-L128) |
+| **Outer** (`RenyiAccountant`) — **per-node** | Privacy auditing chính thức (Opacus SGM tight bound), tích RDP độc lập cho mỗi honest client | 1 step/round/node qua `acc[nid].step()` | [renyi_accountant.py](../../core/renyi_accountant.py), [simulator.py:178–223](simulator.py#L178-L223) |
 
-### Outer accountant dùng σ_DP scheduler (sau Bug #7 fix)
+### Outer accountant: per-node RenyiAccountant với Lipschitz-inflated sensitivity
 
 ```python
-avg_sigma_dp   = mean(sigma_dps.values())   # scheduler output, pre-cap
-effective_mult = max(avg_sigma_dp / C, 0.01)
-accountant.step(honest_steps, q_composed, effective_mult)
+# Per-node accountant — handle σ_k heterogeneity (game ra σ khác nhau theo trust).
+# Lazy-create RenyiAccountant cho mỗi node lần đầu active.
+q_client = config.dp.sampling_rate              # NO q_batch composition (Bug #6 REVERTED)
+
+for nid, node in nodes:
+    if node.is_attacker:
+        continue
+    if nid in sigma_dps and sigma_dps[nid] > 0:
+        sigma_node = sigma_dps[nid]                  # scheduler output, pre-cap
+        z_node     = sigma_node / C
+        L_strat    = 2.0 * β_strat * z_node          # Bug #9 Lipschitz inflation
+        C_total    = C * (1.0 + L_strat)
+        eff_mult   = max(sigma_node / C_total, 0.01) # Opacus floor 0.01
+        acc[nid].step(n_steps=1, sampling_rate=q_client, noise_mult=eff_mult)
+    per_node_eps[nid] = acc[nid].get_epsilon() if acc[nid] else 0.0
+
+epsilon = max(per_node_eps.values())   # worst-case honest node (báo cáo chính)
+eps_avg = mean(per_node_eps.values())  # diagnostic
 ```
 
-Lý do dùng `σ_DP` scheduler trực tiếp: sau Bug #7 fix, cap chỉ rescale `n_strat` → `n_DP` giữ nguyên distribution Gaussian thuần `N(0, σ_DP²·I)` → Gaussian Mechanism guarantee `RDP_α = α·C²/(2σ_DP²)` apply exact với `σ = σ_DP` từ scheduler.
+**Lý do dùng `σ_DP` scheduler trực tiếp** (sau Bug #7): cap chỉ rescale `n_strat` → `n_DP` giữ Gaussian thuần `N(0, σ_DP²·I)` → Gaussian Mechanism guarantee `RDP_α = α·C²/(2σ_DP²)` apply exact với `σ = σ_DP`.
 
-**Trước Bug #7 fix** (legacy): cap rescale CẢ `n_DP` → distribution không còn Gaussian → phải dùng proxy `σ_eff = ‖n_dp_post‖/√D` (sample-based estimate, conservative heuristic, không rigorous).
+**Lý do per-node accountant** (commit 5d39ca7): game mechanism ra σ_k khác nhau giữa các nodes (theo trust signal) → single accountant với avg σ sẽ underestimate worst-case ε của node có σ thấp nhất. Per-node tích RDP độc lập, ε báo cáo = `max(per_node_eps)` — worst-case honest node.
+
+**Lý do `q = q_client` only** (Bug #6 REVERTED, xem §5 chi tiết): noise_game là DP-FedAvg multi-batch (`apply_noise=False` trong local SGD, inject noise 1 lần ở Phase 2) → batch-level Poisson sampling KHÔNG có amplification. Sub-sampling lemma chỉ valid tại client level.
+
+**Lý do Lipschitz inflation `C_total = C·(1+L_strat)`** (Bug #9): `n_strat` phụ thuộc raw `g` → output `Y = g + n_DP + n_strat(g)` violate noise-independence assumption của Gaussian Mechanism. Inflate sensitivity → ε reported tự rigorous (xem §4.1 đầy đủ).
+
+**Trước Bug #7 fix** (legacy, removed): cap rescale CẢ `n_DP` → distribution không còn Gaussian → phải dùng proxy `σ_eff = ‖n_dp_post‖/√D` (sample-based estimate, conservative heuristic, không rigorous). Logic này đã remove sau Bug #7.
 
 ### 4.1 Effective sensitivity C_total (Lipschitz bound — Bug #9)
 
@@ -366,25 +387,36 @@ else:
 
 **Caveat về `n_strat` privacy**: Strict speaking, `n_strat` phụ thuộc vào `g` (raw gradient) — không phải post-processing thuần của `Y = g + n_DP`. **Đã fix qua Bug #9 auto-inflate**: accountant nhận `C_total = C·(1 + L_strat)` thay vì `C` → ε reported tự rigorous (không cần manual correction). Xem Bug #9 + §4.1 chi tiết.
 
-### Bug #6 — Client sampling_rate compose với batch q (đã fix)
+### Bug #6 — Sampling rate composition (REVERTED in commit 5d39ca7)
 
-**Trước:** `accountant.step` chỉ nhận `q_batch = batch_size / n_samples`. Client-level Poisson sub-sampling (`config.dp.sampling_rate`) chỉ dùng để chọn active nodes, không đi vào accountant → **bỏ lỡ privacy amplification by sub-sampling**.
-
-**Sau:** compose theo item-level DP independent Poisson layers:
+**Claim ban đầu:** compose hai Poisson layers để gain ~4× amplification:
 ```math
 q_{\text{composed}} = q_{\text{client}} \cdot q_{\text{batch}}
 ```
-truyền vào `accountant.step(steps, q_composed, ...)`.
+truyền vào `accountant.step(steps, q_composed, ...)`. Threat model gốc: **item-level DP**.
 
-**Ref:** [simulator.py:154–162](simulator.py#L154-L162)
+**REVERTED.** Lý do lý thuyết (xem [BUG_REPORT_q_composed_sampling.md](BUG_REPORT_q_composed_sampling.md) chi tiết):
 
-**Tác động** (MNIST, sampling_rate=0.5, q_batch=0.053 → q_composed=0.0265):
-| Cấu hình | q tới accountant | ε round 4 |
-|---|---|---|
-| Trước fix | 0.053 | ~19 (như sampling_rate=1.0) |
-| Sau fix | 0.0265 | ~4–6 (~4× amplification) |
+1. **Sub-sampling amplification lemma** (Mironov-Talwar 2019, SGM) yêu cầu mechanism inject Gaussian noise NGAY SAU mỗi Poisson sample atomic step. Composition `q_client · q_batch` chỉ valid khi: 1 client × 1 batch × 1 gradient × 1 noise inject mỗi step (DP-FedSGD setup, Abadi 2016).
 
-**Threat model:** giả định **item-level DP** (mỗi data record là 1 unit). Nếu cần client-level DP, q chỉ là `q_client` (không nhân q_batch) — refactor riêng, không thuộc fix này.
+2. **noise_game là DP-FedAvg multi-batch** (KHÔNG match điều kiện trên):
+   - Phase 1: local SGD nhiều batch với `apply_noise=False`
+   - Phase 2: inject noise MỘT LẦN per round sau khi train xong
+   - → Local update là deterministic function của ALL data on client (cho fixed init)
+   - → Batch-level Poisson sampling KHÔNG có amplification effect (không có per-batch "amplified mechanism" để compose)
+
+3. **Hệ quả nếu apply công thức**: ε reported giảm ~14× nhưng true privacy KHÔNG đổi → under-report ε, vi phạm rigorous DP claim, không publishable.
+
+**Sau REVERT** (commit 5d39ca7):
+- `q = q_client` only (chỉ client-level Poisson amplification valid)
+- Threat model: **node-level (user-level) Local DP** — mỗi client là 1 unit privacy
+- Per-node `RenyiAccountant` track RDP độc lập cho mỗi client (xem §4)
+- ε reported = `max(per_node_eps)` — worst-case honest node
+- Trade-off: ε báo cáo lớn hơn ~14× so với spec gốc, đổi lại rigorous DP guarantee
+
+**Ref:** [simulator.py:165–171, 185, 212](simulator.py#L165-L212), [BUG_REPORT_q_composed_sampling.md](BUG_REPORT_q_composed_sampling.md)
+
+**Lưu ý**: Để cùng đạt epsilon_max budget với accuracy target, cần tăng `σ_0` và `sigma_total` ~2-4× so với spec gốc.
 
 ---
 
@@ -502,6 +534,16 @@ Quyết định sau Bug #5. Mỗi round chỉ tăng RDP nội bộ 1 lần (dùn
 
 Combine 3 thành phần (directional + orthogonal + spectrum) → normalize unit vector → scale bởi `σ_strat`. Điều này tách "hướng noise" khỏi "magnitude noise" — magnitude bị kiểm soát bởi scheduler.
 
+### 7.6 Node-level Local DP paradigm (commit 5d39ca7)
+
+Quyết định: chuyển từ item-level DP (claim gốc) sang **node-level (user-level) Local DP**. Lý do: local SGD multi-batch không satisfy 1-step DP-SGD assumption của sub-sampling amplification lemma (Mironov-Talwar 2019) — xem §5 Bug #6 REVERTED.
+
+**Implementation**: per-node `RenyiAccountant` tích RDP độc lập cho mỗi honest client (handle σ_k heterogeneity từ game mechanism); ε báo cáo = `max(per_node_eps)` — worst-case honest node.
+
+**DP unit**: mỗi client/node, không phải mỗi data record.
+
+**Trade-off**: ε báo cáo lớn hơn ~14× so với item-level claim gốc, đổi lại rigorous DP guarantee theo paper-quality DP literature.
+
 ---
 
 ## 8. Ý tưởng đã cân nhắc nhưng không dùng
@@ -532,11 +574,12 @@ python run.py --algorithm noise-game config/fast-experiment/mnist/noise_game.yam
 ```
 
 Healthy run signature:
-- ε **linear** theo round (∆ε ≈ 1–3 per round với MNIST default sau Bug #9 auto-inflate; pre-Bug#9 ≈ 0.4–0.8).
+- `epsilon` (= max per_node_eps) **linear** theo round (∆ε ≈ 1–3 per round với MNIST default sau Bug #9 auto-inflate; pre-Bug#9 ≈ 0.4–0.8).
+- `eps_avg` (mean per_node_eps) gần `epsilon` — chênh lệch lớn báo hiệu σ_k heterogeneity cao (vài node bị spike ε do trust thấp).
 - `avg_sigma_dp_precap` decay smooth theo $e^{-\kappa t}$.
 - `avg_n_dp_norm_postcap ≈ σ_DP · √D` (Bug #7: cap không rescale n_DP, postcap == precap).
 - Acc tăng đều, không oscillate dưới noise dominant.
-- Run hoàn thành đủ `n_rounds`, không break do budget (cần `epsilon_max` đủ lớn — xem §6.2 bảng tra).
+- Run hoàn thành đủ `n_rounds`, không break do `max(per_node_eps) > epsilon_max` (cần `epsilon_max` đủ lớn — xem §6.2 bảng tra).
 
 ---
 
