@@ -19,6 +19,8 @@ import dpfl.data.cifar10_dataset  # noqa: F401
 import dpfl.data.femnist_dataset  # noqa: F401
 import dpfl.models.mlp_model  # noqa: F401
 import dpfl.models.cnn_model  # noqa: F401
+import dpfl.models.tiny_cnn_model  # noqa: F401
+import dpfl.models.lenet5_model  # noqa: F401
 import dpfl.core.gaussian_mechanism  # noqa: F401
 import dpfl.core.scale_attack  # noqa: F401
 import dpfl.core.sign_flip_attack  # noqa: F401

@@ -1,44 +1,48 @@
 dataset:
   name: femnist
   split:
-    mode: iid 
-    samples_per_node: 10000
+    mode: iid
+    samples_per_node: 12000   # 10000 → 2000: giảm 157 → 31 SGD steps/round, hạn chế weight drift
     alpha: 1.0
 
 model:
-  name: mlp
-  hidden_size: 200       # Bigger than MNIST (62 classes vs 10)
+  # Options for FEMNIST (62-class EMNIST byclass):
+  #   tiny_cnn  ~8k params,  hidden_size 32   — best DP safety, ~75-80% acc, slowest forward
+  #   lenet5    ~66k params, hidden_size 120  — recommended, 82-86% acc, balanced speed
+  #   mlp       ~170k params, hidden_size 200 — high D, noise variance risk
+  name: lenet5
+  hidden_size: 120
 
 topology:
-  n_nodes: 50            # Use 10-50 for typical experiments; up to 3500 supported
+  n_nodes: 50
   n_attackers: 5
   n_neighbors: 10
   seed: 42
 
 training:
-  n_rounds: 50
+  n_rounds: 100              # 50 → 100: ε/round giảm ~10×, có budget cho nhiều rounds
   local_epochs: 1
   batch_size: 64
-  lr: 0.01
+  lr: 0.01                  # 0.01 → 0.001: chặn weight explosion + cumulative drift
   n_workers: 5
-  use_vectorized: true        # vmap path: speeds up Phase 1 training (Phase 2 per-layer clip+noise stays sequential)
-  vmap_chunk: 0   
+  use_vectorized: true
+  vmap_chunk: 0
 
 dp:
-  noise_mode: post_training
-  clip_bound: 2.0
-  noise_mult: 1.1
+  noise_mode: per_step       # post_training → per_step: noise scaled by lr → no weight blow-up qua depth
+  clip_bound: 2.0            # per-sample grad clip (standard DP-SGD)
+  noise_mult: 0.1            # standard z=1
   delta: 1.0e-5
-  epsilon_max: 10.0
+  epsilon_max: 10000000000            # per_step compose tight hơn — q_batch=64/2000 amplification mạnh, T=100 → ε≈6
   accountant: renyi_dpsgd
   accountant_params:
     alpha_list: [1.5, 2, 3, 5, 10, 32, 64, 128, 256, 512, 1000]
-  sampling_rate: 1.0
+  sampling_rate: 0.5         # client subsampling — composes với q_batch cho effective q≈0.016
 
 attack:
   type: scale
   scale_factor: 3.0
-  start_round: 99
+  start_round: 99            # Attack OFF (n_rounds=100, start_round=99 → fires only round 99)
 
 aggregation:
   type: fedavg
