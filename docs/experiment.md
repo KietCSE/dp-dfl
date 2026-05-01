@@ -10,7 +10,7 @@
 
 | Tham số | Value |
 |---------|-------|
-| Nodes | 30 (MNIST), 50 (FEMNIST) |
+| Nodes | 300 |
 | Topology | Erdős-Rényi p=0.3 |
 | Rounds | 50 |
 | Local epochs | 1 |
@@ -19,6 +19,8 @@
 | δ | 1e-5 |
 | Clipping bound C | 1.0 (MNIST), 2.0 (FEMNIST) |
 | Privacy accountant | Opacus RDP + tight conversion |
+
+> **Privacy regime note**: Với hệ thống quy mô vừa (~30–50 nodes ở đây, mở rộng đến vài trăm nodes), user-level LDP **không có privacy amplification** từ subsampling/aggregation. Budget ε ≤ 4 sẽ phá hủy khả năng học. Chúng tôi do đó tập trung vào **moderate privacy regime** với ε ∈ {8, 16}, phù hợp với prior LDP-DFL work (Wei 2022, Truex 2020). Tighter budgets sẽ cần (a) số client lớn hơn để khai thác amplification, hoặc (b) chuyển sang user-level **central** DP — cả hai đều orthogonal với contribution của paper này về trust-aware aggregation.
 
 ---
 
@@ -40,7 +42,7 @@ So sánh accuracy của Trust-Aware với baselines (DP-FedAvg-LDP, UDP-DFL) tro
 
 | Tham số | Values |
 |---------|--------|
-| ε sweep | {2, 8} |
+| ε sweep | {8, 16} |
 | Byzantine fraction | 0% |
 | Datasets | MNIST, FEMNIST |
 | Seeds | 3 |
@@ -51,13 +53,13 @@ So sánh accuracy của Trust-Aware với baselines (DP-FedAvg-LDP, UDP-DFL) tro
 #### Table 1: Final Accuracy
 
 ```
-─────────────────────────────────────────────────────────────────
-Method           | MNIST ε=2 | MNIST ε=8 | FEMNIST ε=2 | FEMNIST ε=8
-─────────────────────────────────────────────────────────────────
-DP-FedAvg-LDP    | xx.x±x.x  | xx.x±x.x  | xx.x±x.x    | xx.x±x.x
-UDP-DFL          | xx.x±x.x  | xx.x±x.x  | xx.x±x.x    | xx.x±x.x
-**Ours**         | xx.x±x.x  | xx.x±x.x  | xx.x±x.x    | xx.x±x.x
-─────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────
+Method           | MNIST ε=8 | MNIST ε=16 | FEMNIST ε=8 | FEMNIST ε=16
+───────────────────────────────────────────────────────────────────
+DP-FedAvg-LDP    | xx.x±x.x  | xx.x±x.x   | xx.x±x.x    | xx.x±x.x
+UDP-DFL          | xx.x±x.x  | xx.x±x.x   | xx.x±x.x    | xx.x±x.x
+**Ours**         | xx.x±x.x  | xx.x±x.x   | xx.x±x.x    | xx.x±x.x
+───────────────────────────────────────────────────────────────────
 ```
 
 **Metric**: Final test accuracy (mean ± std across 3 seeds).
@@ -68,7 +70,7 @@ UDP-DFL          | xx.x±x.x  | xx.x±x.x  | xx.x±x.x    | xx.x±x.x
 - **X-axis**: Communication round t (1 → 50)
 - **Y-axis**: Test accuracy (%)
 - **Lines**: 3 methods (DP-FedAvg-LDP, UDP-DFL, Ours)
-- **Setup**: ε=4 fixed (chọn 1 ε để chart sạch sẽ)
+- **Setup**: ε=8 fixed (chọn budget tighter trong sweep để chart sạch sẽ)
 - **Subplots**: 2 panels (a) MNIST, (b) FEMNIST
 - **Expected**: Ours line trên cùng, converge nhanh hơn, accuracy cao hơn cuối training.
 
@@ -93,7 +95,7 @@ So sánh tính robust của Trust-Aware với defense baselines (Krum-LDP, Media
 
 | Tham số | Values |
 |---------|--------|
-| ε | 4 (fixed) |
+| ε | 8 (fixed) |
 | Byzantine fraction f | **{0%, 10%, 20%, 30%}** |
 | Attack type | Sign-flip only |
 | Datasets | MNIST, FEMNIST |
@@ -105,7 +107,7 @@ So sánh tính robust của Trust-Aware với defense baselines (Krum-LDP, Media
 #### Table 2: Accuracy under Sign-flip Attack
 
 ```
-MNIST (ε=4):
+MNIST (ε=8):
 ─────────────────────────────────────────────────
 Method            | f=0%      | f=10%     | f=20%     | f=30%
 ─────────────────────────────────────────────────
@@ -115,7 +117,7 @@ Median + LDP      | xx.x±x.x  | xx.x±x.x  | xx.x±x.x  | xx.x±x.x
 **Ours**          | xx.x±x.x  | xx.x±x.x  | xx.x±x.x  | xx.x±x.x
 ─────────────────────────────────────────────────
 
-FEMNIST (ε=4):
+FEMNIST (ε=8):
 ─────────────────────────────────────────────────
 Method            | f=0%      | f=10%     | f=20%     | f=30%
 ─────────────────────────────────────────────────
@@ -134,7 +136,7 @@ Median + LDP      | xx.x±x.x  | xx.x±x.x  | xx.x±x.x  | xx.x±x.x
 - **X-axis**: 4 methods (DP-FedAvg, Krum, Median, Ours)
 - **Y-axis**: Accuracy (%)
 - **Bars per method**: 2 bars — light (clean f=0%) vs dark (under attack f=20%)
-- **Setup**: MNIST, ε=4 (chính); có thể thêm subplot FEMNIST nếu muốn
+- **Setup**: MNIST, ε=8 (chính); có thể thêm subplot FEMNIST nếu muốn
 - **Insight**: Gap giữa 2 bars = mức độ bị attack ảnh hưởng. Ours có gap nhỏ nhất.
 
 #### Figure 3: Detection Rate (TPR Bar Chart)
@@ -143,7 +145,7 @@ Median + LDP      | xx.x±x.x  | xx.x±x.x  | xx.x±x.x  | xx.x±x.x
 - **X-axis**: 2 datasets (MNIST, FEMNIST)
 - **Y-axis**: TPR (0 → 1.0)
 - **Bars per dataset**: 2 bars — Krum + LDP vs Trust-Aware (Ours)
-- **Setup**: f=20%, ε=4
+- **Setup**: f=20%, ε=8
 - **Note**: Median + LDP và DP-FedAvg không có detection mechanism → loại khỏi figure này.
 - **Insight**: Ours catch malicious nhiều hơn Krum.
 

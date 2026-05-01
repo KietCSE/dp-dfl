@@ -58,7 +58,7 @@ dp:
                 512,
                 1000,
             ]
-    sampling_rate: 0.5 # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
+    sampling_rate: 0.1 # Poisson client subsampling: 1.0 = all clients/round, <1 = sampled
 
 attack:
     type: scale

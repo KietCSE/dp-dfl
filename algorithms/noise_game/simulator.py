@@ -114,6 +114,10 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     "n_dp_norm": metrics["n_dp_norm"],   # diagnostic (Bug #7: postcap==precap)
                     "nsr": metrics["nsr"],
                     "sigma_dp": metrics["sigma_dp"],
+                    # Alias for tracker's per-node report (expects key "sigma_n",
+                    # convention shared with adaptive_noise). Without this, the
+                    # final report prints sigma=0.000 for all honest nodes.
+                    "sigma_n": metrics["sigma_dp"],
                 }
 
             # Commit one round's RDP cost to the internal scheduler tracker
@@ -157,10 +161,20 @@ class NoiseGameDFLSimulator(BaseSimulator):
             # Phase 4: Per-node privacy accounting (handles σ_k heterogeneity).
             # Each honest node has its own σ_DP from the game mechanism →
             # accumulate RDP cost into a node-specific RenyiAccountant.
+            #
+            # DP unit: node-level (user-level Local DP). Local SGD runs with
+            # apply_noise=False — no per-step DP guarantee inside training.
+            # Noise is injected ONCE per round post-aggregation, so
+            # accountant composition is per-round (steps=1), not per-minibatch.
+            # Sampling amplification comes only from Poisson client subsampling
+            # (q_client) — NOT from per-batch sampling, because the local update
+            # is a deterministic function of all data seen given fixed init.
+            #
             # After Bug #7: n_DP is pure Gaussian N(0, σ_DP²·I).
             # After Bug #9: Lipschitz inflation C_total = C·(1+L_strat),
-            #   L_strat = 2·β_strat·z, z = σ_DP/C — applied per-node.
-            # Bug #6: q_composed = q_client · q_batch (shared across nodes).
+            #   L_strat = 2·β_strat·z, z = σ_DP/C — applied per-node to make ε
+            #   reported rigorous (n_strategic depends on raw g, breaking the
+            #   noise-independence assumption of plain Gaussian Mechanism).
             avg_sigma_dp = (float(np.mean(list(sigma_dps.values())))
                             if sigma_dps else 0.0)
             epsilon = 0.0     # eps_max (worst honest)
@@ -168,12 +182,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
             per_node_eps: dict = {}
             if self.accountant is not None:
                 from dpfl.core.renyi_accountant import RenyiAccountant
-                honest_steps = next(
-                    s for nid, s in all_steps.items() if nid not in self.attacker_ids)
-                q_batch = self.config.training.batch_size / self.nodes[
-                    self.config.topology.n_attackers].n_samples
                 q_client = max(min(float(self.config.dp.sampling_rate), 1.0), 0.0)
-                q_composed = q_client * q_batch
 
                 # Charge RDP cost only for ACTIVE honest nodes this round.
                 # Inactive honest don't have a game-derived σ this round →
@@ -199,7 +208,8 @@ class NoiseGameDFLSimulator(BaseSimulator):
                                 alpha_list=self.accountant.alpha_list,
                                 delta=self.accountant.delta)
                             self._per_node_acc[nid] = acc
-                        acc.step(honest_steps, q_composed, eff_mult_node)
+                        # 1 noise injection per round, q = Poisson client rate
+                        acc.step(1, q_client, eff_mult_node)
 
                     # Read cumulative ε (active just stepped; inactive: stale
                     # or 0 if never been active before).
