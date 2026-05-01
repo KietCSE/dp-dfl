@@ -275,3 +275,11 @@ class TrustAwareDFLSimulator(BaseSimulator):
                     "trust_toward_honest": float(np.mean(t_h)) if t_h else 0.0,
                     "trust_toward_attacker": float(np.mean(t_a)) if t_a else 0.0,
                 })
+
+            if (self.accountant is not None
+                    and epsilon > self.config.dp.epsilon_max):
+                logger.warning(
+                    "Round %3d/%d | Budget exceeded (eps_max=%.2f > %.2f)",
+                    t + 1, self.config.training.n_rounds,
+                    epsilon, self.config.dp.epsilon_max)
+                break

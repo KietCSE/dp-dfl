@@ -12,15 +12,15 @@
 # → Plain DP-FedAvg needs algorithmic upgrades, not hyperparameter tuning.
 
 dataset:
-  name: mnist
+  name: femnist
   split:
     mode: iid
-    samples_per_node: 1200      # match noise_game.yaml / cfl_fedavg_eps2.yaml
+    samples_per_node: 12000      # match noise_game.yaml / cfl_fedavg_eps2.yaml
     alpha: 1.0
 
 model:
   name: mlp
-  hidden_size: 32               # match noise_game.yaml — smaller D for DP friendliness
+  hidden_size: 200               # match noise_game.yaml — smaller D for DP friendliness
 
 topology:
   n_nodes: 50                   # match other DFL experiments in paper

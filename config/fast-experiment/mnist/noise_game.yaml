@@ -1,8 +1,8 @@
 dataset:
-    name: mnist
+    name: femnist
     split:
         mode: iid
-        samples_per_node: 1200 # each node draws 3000 random samples from 60k pool (overlap)
+        samples_per_node: 12000 # each node draws 3000 random samples from 60k pool (overlap)
         alpha: 1.0 # ignored in iid mode
 
 model:

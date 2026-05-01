@@ -233,9 +233,12 @@ class NoiseGameDFLSimulator(BaseSimulator):
                     "avg_nsr": float(np.mean(honest_nsr)) if honest_nsr else 0.0,
                 })
 
-            if self.accountant is not None and epsilon > self.config.dp.epsilon_max:
-                logger.warning("Round %3d/%d | Budget exceeded (eps_max=%.2f)",
-                               t + 1, self.config.training.n_rounds, epsilon)
+            if (self.accountant is not None
+                    and epsilon > self.config.dp.epsilon_max):
+                logger.warning(
+                    "Round %3d/%d | Budget exceeded (eps_max=%.2f > %.2f)",
+                    t + 1, self.config.training.n_rounds,
+                    epsilon, self.config.dp.epsilon_max)
                 break
 
     def _neighbor_avg_control(self, node: NoiseGameNode) -> torch.Tensor:

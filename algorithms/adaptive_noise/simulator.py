@@ -367,6 +367,17 @@ class AdaptiveNoiseSimulator(BaseSimulator):
                 )
                 self._prev_sigma_avg = sigma_next_avg
 
+            # System-level stop: any honest node breaches config budget.
+            # Per-node freeze (line ~308) lets individual nodes drop out, but
+            # user requirement is strict: as soon as eps_max > config cap →
+            # halt entire run. Logged round still captures the breach value.
+            if (self.rdp is not None
+                    and eps_system > self.config.dp.epsilon_max):
+                logger.warning(
+                    "Round %3d/%d | Budget exceeded (eps_max=%.2f > %.2f)",
+                    t + 1, T, eps_system, self.config.dp.epsilon_max)
+                break
+
             # Stop if ALL honest nodes are frozen.
             if honest_eps and n_frozen == len(honest_eps):
                 logger.warning("Round %3d/%d | All honest nodes frozen — stop.",

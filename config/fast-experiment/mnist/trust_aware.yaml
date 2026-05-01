@@ -27,7 +27,7 @@ training:
 dp:
     noise_mode: none # D2B-DP injects per-layer Gaussian noise itself (Step 2.2)
     delta: 1.0e-5
-    epsilon_max: 100000000.0
+    epsilon_max: 5.0
     accountant: renyi_dpsgd
     accountant_params:
         alpha_list:

@@ -1,8 +1,9 @@
 dataset:
   name: femnist
   split:
-    mode: dirichlet
-    alpha: 0.5
+    mode: iid 
+    samples_per_node: 10000
+    alpha: 1.0
 
 model:
   name: mlp
@@ -20,6 +21,8 @@ training:
   batch_size: 64
   lr: 0.01
   n_workers: 5
+  use_vectorized: true        # vmap path: speeds up Phase 1 training (Phase 2 per-layer clip+noise stays sequential)
+  vmap_chunk: 0   
 
 dp:
   noise_mode: post_training
@@ -35,7 +38,7 @@ dp:
 attack:
   type: scale
   scale_factor: 3.0
-  start_round: 0
+  start_round: 99
 
 aggregation:
   type: fedavg
