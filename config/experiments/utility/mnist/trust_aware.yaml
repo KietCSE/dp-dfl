@@ -1,0 +1,93 @@
+dataset:
+    name: mnist
+    split:
+        mode: iid
+        samples_per_node: 2000
+        alpha: 1.0 # ignored in iid mode
+
+model:
+    name: mlp
+    hidden_size: 32
+
+topology:
+    n_nodes: 300
+    n_attackers: 0
+    n_neighbors: 150
+    seed: 42
+
+training:
+    n_rounds: 50
+    local_epochs: 1
+    batch_size: 64
+    lr: 0.01
+    n_workers: 5
+    use_vectorized: true
+    vmap_chunk: 0
+
+dp:
+    noise_mode: none # D2B-DP injects per-layer Gaussian noise itself (Step 2.2)
+    delta: 1.0e-5
+    epsilon_max: 5.0
+    accountant: renyi_dpsgd
+    accountant_params:
+        alpha_list:
+            [
+                1.01,
+                1.05,
+                1.1,
+                1.25,
+                1.5,
+                1.75,
+                2,
+                2.5,
+                3,
+                4,
+                5,
+                6,
+                8,
+                10,
+                12,
+                16,
+                20,
+                32,
+                50,
+                64,
+                100,
+                128,
+                256,
+                512,
+                1000,
+            ]
+    sampling_rate: 0.1
+
+attack:
+    type: scale
+    scale_factor: -10.0
+    start_round: 99999 # never activates — utility-only run
+
+aggregation:
+    type: trust_aware_d2b
+    params: {}
+
+trust:
+    # Step 2.1 — adaptive clip
+    k: 5
+    # Step 2.2 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
+    rho_min: 0.5
+    rho_max: 10.0
+    beta: 0.5
+    # Step 3.3 — anomaly threshold
+    theta: 1.2
+    gamma: 3.0
+    kappa: 0.2
+    # Step 4.2 — trust EMA
+    alpha_T: 0.85
+    trust_init: 1.0
+    # Step 4.3 — softmax aggregation + momentum
+    T_min: 0.5
+    beta_soft: 8.0
+    beta_m: 0.9
+
+output_dir: ./results
+device: auto
+seed: 42
