@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import dpfl.data.mnist_dataset  # noqa: F401
 import dpfl.data.cifar10_dataset  # noqa: F401
 import dpfl.data.femnist_dataset  # noqa: F401
+import dpfl.data.fashion_mnist_dataset  # noqa: F401
+import dpfl.data.emnist_digits_dataset  # noqa: F401
 import dpfl.models.mlp_model  # noqa: F401
 import dpfl.models.cnn_model  # noqa: F401
 import dpfl.models.tiny_cnn_model  # noqa: F401

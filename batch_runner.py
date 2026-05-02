@@ -36,6 +36,8 @@ DATASETS = {
     "mnist": {"model": "mlp", "hidden_size": 100, "rounds": 100},
     "cifar10": {"model": "cnn", "hidden_size": 128, "rounds": 200},
     "femnist": {"model": "mlp", "hidden_size": 200, "rounds": 100},
+    "fashion_mnist": {"model": "mlp", "hidden_size": 100, "rounds": 100},
+    "emnist_digits": {"model": "mlp", "hidden_size": 100, "rounds": 100},
 }
 
 SEEDS = [42, 123, 456]

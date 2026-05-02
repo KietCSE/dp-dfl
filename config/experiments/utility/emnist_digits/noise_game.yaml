@@ -1,0 +1,93 @@
+dataset:
+    name: emnist_digits
+    split:
+        mode: iid
+        samples_per_node: 2000
+        alpha: 1.0 # ignored in iid mode
+
+model:
+    name: mlp
+    hidden_size: 32
+
+topology:
+    n_nodes: 300
+    n_attackers: 0
+    n_neighbors: 150
+    seed: 42
+
+training:
+    n_rounds: 50
+    local_epochs: 1
+    batch_size: 64
+    lr: 0.01
+    n_workers: 5
+    use_vectorized: true
+    vmap_chunk: 0
+
+dp:
+    noise_mode: none # noise-game self-manages strategic noise injection
+    clip_bound: 1.0 # EMNIST-Digits: C=1.0
+    delta: 1.0e-5
+    epsilon_max: 8.0
+    accountant_params:
+        alpha_list:
+            [
+                1.01,
+                1.05,
+                1.1,
+                1.25,
+                1.5,
+                1.75,
+                2,
+                2.5,
+                3,
+                4,
+                5,
+                6,
+                8,
+                10,
+                12,
+                16,
+                20,
+                32,
+                50,
+                64,
+                100,
+                128,
+                256,
+                512,
+                1000,
+            ]
+    sampling_rate: 0.1
+
+attack:
+    type: scale
+    scale_factor: -10.0
+    start_round: 99999 # never activates — utility-only run
+
+aggregation:
+    type: krum
+    params:
+      n_attackers: 0   # MUST match topology.n_attackers
+      multi_k: 5
+
+noise_game:
+    alpha_attack: 0.1
+    sigma_0: 2.0
+    svd_rank: 16
+    svd_reshape_k: 64
+    momentum_beta: 0.9
+    ema_gamma: 0.9
+    anneal_kappa: 0.01
+    align_tau: 0.2
+    scaffold: true
+    two_track: true
+    two_track_lambda: 0.7
+    beta_strat: 0.3
+    sigma_total: 0.5
+    rdp_alpha: 2.0
+    nsr_warn: 200.0
+
+output_dir: ./results
+device: auto
+seed: 42

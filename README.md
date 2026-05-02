@@ -35,6 +35,8 @@ Framework mô phỏng hệ thống **Decentralized Federated Learning** với nh
 | Dataset | Model | Input | Params | Config |
 |---|---|---|---|---|
 | MNIST | MLP | 784 → 100 → 10 | ~80K | `dataset.name: mnist`, `model.name: mlp` |
+| Fashion-MNIST | MLP | 784 → 100 → 10 | ~80K | `dataset.name: fashion_mnist`, `model.name: mlp` |
+| EMNIST-Digits | MLP | 784 → 100 → 10 | ~80K | `dataset.name: emnist_digits`, `model.name: mlp` |
 | CIFAR-10 | CNN (2-conv + 2-fc) | 3×32×32 → 10 | ~2.1M | `dataset.name: cifar10`, `model.name: cnn` |
 
 ## Cài Đặt
@@ -361,7 +363,7 @@ Tự tạo file `.yaml` bằng cách chọn giá trị cho từng section:
 
 | Key | Giá trị | Mô tả |
 |---|---|---|
-| `name` | `mnist` \| `cifar10` | Dataset |
+| `name` | `mnist` \| `fashion_mnist` \| `emnist_digits` \| `cifar10` \| `femnist` | Dataset |
 | `split.mode` | `iid` \| `dirichlet` | Cách chia data cho nodes |
 | `split.alpha` | `float` (vd: `0.5`) | Dirichlet alpha (nhỏ = non-IID mạnh, lớn ≈ IID). Chỉ dùng khi `mode: dirichlet` |
 

@@ -1,0 +1,62 @@
+# DFL DP-FedAvg under Byzantine attack — robustness baseline (no defense, only DP).
+
+dataset:
+  name: emnist_digits
+  split:
+    mode: iid
+    samples_per_node: 2000
+    alpha: 1.0
+
+model:
+  name: mlp
+  hidden_size: 32
+
+topology:
+  n_nodes: 300
+  n_attackers: 60                # 20% Byzantine
+  n_neighbors: 150
+  seed: 42
+
+training:
+  n_rounds: 50
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+  use_vectorized: true
+  vmap_chunk: 0
+
+dp:
+  noise_mode: post_training      # User-level DP: train SGD → clip update → noise
+  clip_bound: 0.0234
+  noise_mult: 1.45               # gives ε≈16 over 50 rounds (q=0.5)
+  delta: 1.0e-5
+  epsilon_max: 16.5
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 0.5
+
+attack:
+  type: scale
+  scale_factor: -10.0
+  start_round: 10
+
+# Alternative attack: Label Flipping (data poisoning)
+# attack:
+#   type: label_flip
+#   flip_mode: rotate            # rotate | random | negate
+#   start_round: 10
+
+# Alternative attack: Sign Flipping (model poisoning)
+# attack:
+#   type: sign_flip
+#   start_round: 10
+
+aggregation:
+  type: fedavg
+  params: {}
+
+output_dir: ./results
+device: auto
+seed: 42
