@@ -2,6 +2,24 @@
 # Run all robustness scenarios sequentially. Each scenario logs to its own file
 # in logs/ so the terminal stays clean. Tail a specific run live:
 #   tail -f logs/01_mnist_dfl_fedavg_ldp_20_sign.log
+#
+# Ctrl+C kills the current python run AND any leftover workers, then exits.
+
+# Make this script the leader of its own process group so kill -- -$$ targets
+# every descendant (python + multiprocessing workers) on Ctrl+C.
+set -m
+
+cleanup() {
+  echo ""
+  echo "Interrupted. Killing all child processes..."
+  # Send SIGTERM to the entire process group of this script
+  kill -TERM -- -$$ 2>/dev/null
+  # Give children a moment to clean up, then SIGKILL anything still alive
+  sleep 1
+  kill -KILL -- -$$ 2>/dev/null
+  exit 130
+}
+trap cleanup SIGINT SIGTERM
 
 mkdir -p logs
 
