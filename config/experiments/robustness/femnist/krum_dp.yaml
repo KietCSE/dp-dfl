@@ -4,7 +4,7 @@ dataset:
   name: femnist
   split:
     mode: iid
-    samples_per_node: 10000
+    samples_per_node: 2000
     alpha: 1.0
 
 model:
@@ -16,13 +16,13 @@ model:
   hidden_size: 120
 
 topology:
-  n_nodes: 300
+  n_nodes: 500
   n_attackers: 60                # 20% Byzantine
-  n_neighbors: 150
+  n_neighbors: 200
   seed: 42
 
 training:
-  n_rounds: 100
+  n_rounds: 300
   local_epochs: 1
   batch_size: 64
   lr: 0.01
@@ -60,8 +60,8 @@ attack:
 aggregation:
   type: krum
   params:
-    n_attackers: 30              # expected Byzantine per neighborhood (~20% of 150)
-    multi_k: 1
+    n_attackers: 60              # expected Byzantine per neighborhood (~20% of 150)
+    multi_k: 3
 
 output_dir: ./results
 device: auto

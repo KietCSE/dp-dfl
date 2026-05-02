@@ -8,17 +8,17 @@ dataset:
     alpha: 1.0
 
 model:
-  name: mlp
-  hidden_size: 32
+  name: lenet5
+  hidden_size: 120
 
 topology:
-  n_nodes: 300
-  n_attackers: 60                # 20% Byzantine
-  n_neighbors: 150
+  n_nodes: 500
+  n_attackers: 100                # 20% Byzantine
+  n_neighbors: 200
   seed: 42
 
 training:
-  n_rounds: 50
+  n_rounds: 300
   local_epochs: 1
   batch_size: 64
   lr: 0.01

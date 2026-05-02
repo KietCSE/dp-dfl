@@ -6,17 +6,17 @@ dataset:
         alpha: 1.0 # ignored in iid mode
 
 model:
-    name: mlp
-    hidden_size: 32
+    name: lenet5
+    hidden_size: 120
 
 topology:
-    n_nodes: 300
+    n_nodes: 500
     n_attackers: 0
-    n_neighbors: 150
+    n_neighbors: 200
     seed: 42
 
 training:
-    n_rounds: 50
+    n_rounds: 300
     local_epochs: 1
     batch_size: 64
     lr: 0.01
@@ -27,7 +27,7 @@ training:
 dp:
     noise_mode: none # D2B-DP injects per-layer Gaussian noise itself (Step 2.2)
     delta: 1.0e-5
-    epsilon_max: 5.0
+    epsilon_max: 8.0
     accountant: renyi_dpsgd
     accountant_params:
         alpha_list:
