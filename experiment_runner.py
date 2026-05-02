@@ -52,7 +52,8 @@ def run_experiment(config_cls, build_fn, prefix, default_config_name, algo_name=
 
     # Output directory + tracker + logger
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = Path(config.output_dir) / f"{prefix}_{timestamp}"
+    folder_prefix = config.name if config.name else prefix
+    run_dir = Path(config.output_dir) / f"{folder_prefix}_{timestamp}"
     metadata = {
         "algorithm": algo_name or prefix,
         "attack_type": config.attack.type,

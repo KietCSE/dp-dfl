@@ -8,8 +8,8 @@ dataset:
     alpha: 1.0
 
 model:
-  name: lenet5
-  hidden_size: 120
+  name: mlp
+  hidden_size: 64
 
 topology:
   n_nodes: 300

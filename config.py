@@ -109,6 +109,7 @@ class BaseExperimentConfig:
     dp: DPConfig = field(default_factory=DPConfig)
     attack: AttackConfig = field(default_factory=AttackConfig)
     aggregation: AggregationConfig = field(default_factory=AggregationConfig)
+    name: str = ""                       # optional run name; result folder becomes <name>_<timestamp>; empty → fallback to algorithm prefix
     output_dir: str = "dpfl/results"
     device: str = "auto"
     seed: int = 42

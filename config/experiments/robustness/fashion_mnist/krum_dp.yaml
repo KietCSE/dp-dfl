@@ -1,4 +1,5 @@
 # Krum + user-level DP under Byzantine attack — robust aggregation + post-training DP.
+name: krum_dp_fashion_mnist
 
 dataset:
   name: fashion_mnist
@@ -8,13 +9,13 @@ dataset:
     alpha: 1.0
 
 model:
-  name: lenet5
-  hidden_size: 120
+  name: mlp
+  hidden_size: 64
 
 topology:
-  n_nodes: 500
-  n_attackers: 100                # 20% Byzantine
-  n_neighbors: 200
+  n_nodes: 50
+  n_attackers: 10                # 20% Byzantine
+  n_neighbors: 10
   seed: 42
 
 training:

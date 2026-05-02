@@ -9,7 +9,7 @@ dataset:
 
 model:
   name: mlp
-  hidden_size: 32
+  hidden_size: 64
 
 topology:
   n_nodes: 300

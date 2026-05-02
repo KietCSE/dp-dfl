@@ -1,0 +1,51 @@
+name: dfl_fedavg_ldp_20_label_attack_mnist 
+
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    samples_per_node: 7000
+    alpha: 1.0
+
+model:
+  name: mlp
+  hidden_size: 64
+
+topology:
+  n_nodes: 500
+  n_attackers: 100
+  n_neighbors: 200
+  seed: 42
+
+training:
+  n_rounds: 300
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+  use_vectorized: true
+  vmap_chunk: 0
+
+dp:
+  noise_mode: post_training
+  clip_bound: 0.0234
+  noise_mult: 0.5             # gives ε≈16 over 50 rounds
+  delta: 1.0e-5
+  epsilon_max: 16.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 0.05
+
+attack:
+  type: label_flip
+  flip_mode: rotate
+  start_round: 10
+
+aggregation:
+  type: fedavg
+  params: {}
+
+output_dir: ./results
+device: auto
+seed: 42
