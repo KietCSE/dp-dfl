@@ -40,7 +40,7 @@ dp:
 # Alternative attack: Sign Flipping (model poisoning)
 attack:
   type: sign_flip
-  start_round: 10
+  start_round: 50
 
 aggregation:
   type: fedavg

@@ -40,7 +40,7 @@ dp:
 attack:
   type: label_flip
   flip_mode: rotate
-  start_round: 10
+  start_round: 50
 
 aggregation:
   type: fedavg

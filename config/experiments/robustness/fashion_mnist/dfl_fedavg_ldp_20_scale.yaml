@@ -40,7 +40,7 @@ dp:
 attack:
   type: scale
   scale_factor: -10.0
-  start_round: 10
+  start_round: 50
 
 aggregation:
   type: fedavg
