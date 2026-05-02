@@ -13,17 +13,26 @@ Determinism contract: per-client shuffles drawn sequentially from data_gen
 same sequence of permutations.
 """
 
-from typing import Dict, Iterator, Tuple
+from typing import Callable, Dict, Iterator, Optional, Tuple
 
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset
 
 
 class VectorizedDataPipeline:
-    """Pre-stacked client data on device. One instance per (train, test) split."""
+    """Pre-stacked client data on device. One instance per (train, test) split.
+
+    Optional data-poisoning support: if `attacker_mask` and `flip_fn` are set,
+    `iter_train_batches` applies `flip_fn` to attacker-row labels per batch,
+    mirroring `LabelFlipDataset.__getitem__` semantics for the vectorized
+    path. Set `attack_active=False` to skip flipping (e.g., before
+    `attack.start_round`).
+    """
 
     def __init__(self, dataset: Dataset, node_data: Dict[int, Subset],
-                 device: torch.device, data_gen: torch.Generator):
+                 device: torch.device, data_gen: torch.Generator,
+                 attacker_mask: Optional[torch.Tensor] = None,
+                 flip_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None):
         self.device = device
         self.data_gen = data_gen
 
@@ -42,6 +51,15 @@ class VectorizedDataPipeline:
         )
         self.max_n_samples = int(self.client_sizes.max().item())
         self.N = len(self.node_ids)
+
+        # Data-poisoning hooks (None = no poisoning, fast path unchanged).
+        # attacker_mask: (N,) bool — True at attacker rows. flip_fn: callable
+        # taking a 1-D tensor of labels and returning flipped labels (same
+        # shape, same device, same dtype). attack_active toggled per round
+        # by simulator to honor attack.start_round.
+        self.attacker_mask = attacker_mask
+        self.flip_fn = flip_fn
+        self.attack_active = True
 
     @staticmethod
     def _resolve_underlying(node_data: Dict[int, Subset]) -> Dataset:
@@ -85,6 +103,16 @@ class VectorizedDataPipeline:
 
             x_batch = self.X_full[batch_idx]
             y_batch = self.Y_full[batch_idx]
+
+            # Data-poisoning: flip labels on attacker rows in-place per batch.
+            # Mirrors LabelFlipDataset.__getitem__ for the vectorized path.
+            # Inactive when flip_fn/mask unset (non-label_flip configs) or
+            # when simulator toggled attack_active=False (pre-start_round).
+            if (self.attack_active and self.flip_fn is not None
+                    and self.attacker_mask is not None):
+                y_batch = y_batch.clone()
+                y_batch[self.attacker_mask] = self.flip_fn(
+                    y_batch[self.attacker_mask])
 
             positions = torch.arange(start, end, device=self.device).unsqueeze(0)
             mask = positions < self.client_sizes.unsqueeze(1)

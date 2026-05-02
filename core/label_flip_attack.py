@@ -52,6 +52,22 @@ class LabelFlipAttack(BaseAttack):
         """Wrap dataset with label flipping. Called during node setup."""
         return LabelFlipDataset(dataset, self.num_classes, self.flip_mode)
 
+    def flip_y(self, y: torch.Tensor) -> torch.Tensor:
+        """Vectorized analog of LabelFlipDataset.__getitem__ flip logic.
+
+        Used by VectorizedDataPipeline to apply poisoning on the (sub)tensor
+        of attacker-row labels in-place per batch — no Python-level Dataset
+        wrapping needed in the GPU-resident path.
+        """
+        if self.flip_mode == "rotate":
+            return (y + 1) % self.num_classes
+        if self.flip_mode == "negate":
+            return (self.num_classes - 1 - y) % self.num_classes
+        if self.flip_mode == "random":
+            return torch.randint(
+                0, self.num_classes, y.shape, device=y.device, dtype=y.dtype)
+        raise ValueError(f"Unknown flip_mode: {self.flip_mode}")
+
     def perturb(self, honest_update: torch.Tensor,
                 context: Optional[Dict] = None) -> torch.Tensor:
         # No-op: poisoning already happened via data wrapper

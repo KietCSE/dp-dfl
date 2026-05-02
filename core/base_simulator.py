@@ -187,11 +187,26 @@ class BaseSimulator(ABC):
         self.X_test = torch.cat(xs, dim=0).to(self.device)
         self.Y_test = torch.cat(ys, dim=0).to(torch.long).to(self.device)
 
+        # Data-poisoning hook: build attacker_mask (aligned with sorted node
+        # ids the pipeline uses internally) and bind attack.flip_y so the
+        # pipeline can apply label flipping per batch in lieu of Python-level
+        # Dataset wrapping. None for non-data-poisoning attacks.
+        attacker_mask = None
+        flip_fn = None
+        if self.attack is not None and hasattr(self.attack, "flip_y"):
+            sorted_node_ids = sorted(node_data.keys())
+            attacker_mask = torch.tensor(
+                [nid in self.attacker_ids for nid in sorted_node_ids],
+                dtype=torch.bool, device=self.device,
+            )
+            flip_fn = self.attack.flip_y
+
         # Per-client training pipeline (GPU-resident). Uses data_gen for
         # deterministic per-client shuffles in the same RNG order as legacy.
         self.train_pipeline = VectorizedDataPipeline(
             dataset=next(iter(node_data.values())).dataset,
             node_data=node_data, device=self.device, data_gen=self.data_gen,
+            attacker_mask=attacker_mask, flip_fn=flip_fn,
         )
 
         logger.info(
@@ -262,15 +277,21 @@ class BaseSimulator(ABC):
                    uniform per-client batch sizes (no Dirichlet padding)
         - Phase 3: noise_mode='post_training' — clip+noise applied on (N, D)
                    update after vectorized SGD
-        Falls back to legacy for: data poisoning (LabelFlip), or per_step DP
-        with non-uniform client sizes.
+        - Data poisoning attacks that expose vectorized flip_y(): pipeline
+          applies flip on attacker rows per batch (replaces Python-level
+          Dataset wrapping for the GPU-resident path).
+        Falls back to legacy for: data poisoning attacks WITHOUT a vectorized
+        flip_y() (future backdoor/etc.), or per_step DP with non-uniform
+        client sizes.
         """
         if not getattr(self.config.training, "use_vectorized", False):
             return False
         if self.train_pipeline is None or self.base_model_template is None:
             return False
+        # Data poisoning: only supported when attack provides vectorized flip_y
         if self.attack is not None and hasattr(self.attack, "wrap_dataset"):
-            return False  # data poisoning needs wrapped Y; pipeline has clean Y
+            if not hasattr(self.attack, "flip_y"):
+                return False  # unsupported data poisoning -> legacy fallback
         nm = self.config.dp.noise_mode
         if nm == "per_step":
             # Phase 3 requires uniform batch sizes (no padding mid-batch)
@@ -332,6 +353,11 @@ class BaseSimulator(ABC):
         chunk = int(getattr(self.config.training, "vmap_chunk", 0) or 0)
         nm = self.config.dp.noise_mode
         attack_active = round_t >= self.config.attack.start_round
+
+        # NOTE: data-poisoning (label_flip) ignores start_round to match
+        # legacy semantics — `apply_data_attack` wraps attacker datasets ONCE
+        # at setup (line 144-147) regardless of round. Pipeline.attack_active
+        # stays True; only model-poisoning attacks gate on round_t below.
 
         # Mask of rows that are honest (or data-poisoning attackers — DP still applies)
         honest_mask = torch.ones(len(ordered_nodes), dtype=torch.bool,
