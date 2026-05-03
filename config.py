@@ -153,6 +153,8 @@ class TrustConfig:
     T_min: float = 0.4          # trust cutoff threshold
     beta_soft: float = 8.0      # softmax temperature inverse
     beta_m: float = 0.9         # momentum factor
+    # Gating Mechanism (Option B)
+    cos_threshold: float = -0.1 # reject updates with cosine similarity below this
 
 @dataclass
 class TrustAwareExperimentConfig(BaseExperimentConfig):

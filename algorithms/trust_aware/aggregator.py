@@ -34,7 +34,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
 
     def __init__(self, theta: float = 1.2, gamma: float = 3.0, kappa: float = 0.2,
                  alpha_T: float = 0.85, T_min: float = 0.4, beta_soft: float = 8.0,
-                 beta_m: float = 0.9, **_kwargs):
+                 beta_m: float = 0.9, cos_threshold: float = -0.1, **_kwargs):
         # theta/gamma/kappa are consumed by the simulator (D_threshold compute);
         # parked on the aggregator so a single config block drives everything.
         self.theta = theta
@@ -44,6 +44,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
         self.T_min = T_min
         self.beta_soft = beta_soft
         self.beta_m = beta_m
+        self.cos_threshold = cos_threshold
 
     def aggregate(self, own_update: torch.Tensor, own_params: torch.Tensor,
                   neighbor_updates: Dict[int, torch.Tensor],
@@ -83,8 +84,10 @@ class TrustAwareD2BAggregator(BaseAggregator):
                 cos_ij = F.cosine_similarity(
                     own_update.unsqueeze(0), s_j.unsqueeze(0)).item()
                 p_dist = math.exp(-d_ij / max(D_threshold, 1e-12))
-                p_cos = max(0.0, cos_ij)
-                q_ij = 2 * p_dist * p_cos / (p_dist + p_cos + 1e-12)
+                q_ij = p_dist
+                if cos_ij < self.cos_threshold:
+                    q_ij = 0.0
+                p_cos = max(0.0, cos_ij) # Just for logging
                 prev_t = trust_scores.get(j, 1.0)
                 t_ij = self.alpha_T * prev_t + (1.0 - self.alpha_T) * q_ij
                 trust_scores[j] = t_ij
