@@ -76,7 +76,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
     # ── Phase 2: per-layer clip + Gaussian noise ────────────────────────────
 
     def _build_packet(self, node: TrustAwareNode, raw_update: torch.Tensor,
-                      rho_t: float):
+                      rho_t: float, attack_active: bool):
         """Per-layer clip → Gaussian noise. Returns (own_clipped_flat,
         packet_flat, sigma_sq_per_layer). Attackers bypass clip + noise
         entirely (model-poisoning by spec) — raw_update propagates as-is to
@@ -113,7 +113,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
         c_dp = self.tc.theta * math.sqrt(max(weighted_var, 0.0))
         # Decay term: γ · exp(-κ · t) · ||ΔW'_i||₂ / √D_total
         rms_self = own_clipped.norm(2).item() / math.sqrt(max(self.param_dim, 1))
-        decay = self.tc.gamma * math.exp(-self.tc.kappa * t) * rms_self
+        decay = self.tc.gamma * math.exp(-self.tc.kappa * (t / self.config.training.n_rounds)) * rms_self
         return max(decay, c_dp)
 
     # ── Main loop ───────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                     continue
                 upd = raw_updates[node.id]
                 updates[node.id] = upd
-                oc, pkt, ssqs = self._build_packet(node, upd, rho_t)
+                oc, pkt, ssqs = self._build_packet(node, upd, rho_t, attack_active)
                 own_clipped[node.id] = oc
                 packets[node.id] = pkt
                 sigma_sq_map[node.id] = ssqs

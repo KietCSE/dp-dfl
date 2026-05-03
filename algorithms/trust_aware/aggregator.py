@@ -84,7 +84,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
                     own_update.unsqueeze(0), s_j.unsqueeze(0)).item()
                 p_dist = math.exp(-d_ij / max(D_threshold, 1e-12))
                 p_cos = max(0.0, cos_ij)
-                q_ij = p_dist * p_cos
+                q_ij = 2 * p_dist * p_cos / (p_dist + p_cos + 1e-12)
                 prev_t = trust_scores.get(j, 1.0)
                 t_ij = self.alpha_T * prev_t + (1.0 - self.alpha_T) * q_ij
                 trust_scores[j] = t_ij
