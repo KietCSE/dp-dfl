@@ -2,12 +2,20 @@
 
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, List
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+
+def _nanmean(vals):
+    """Mean over non-NaN/None entries; returns NaN when all undefined."""
+    nums = [v for v in vals if v is not None
+            and isinstance(v, (int, float)) and not math.isnan(v)]
+    return sum(nums) / len(nums) if nums else float("nan")
 
 
 class MetricsTracker:
@@ -75,16 +83,15 @@ class MetricsTracker:
         # Detection metrics (P/R/F1) only meaningful when attack is active.
         # Average them over attack-active rounds (round >= start_round) so
         # vacuous clean-phase values don't dilute the reported numbers.
+        # Skip NaN per-round entries (rounds with no honest node having defined
+        # P/R/F1 — e.g. defenses without flagging, or empty neighborhoods).
         start_round = self.metadata.get("start_round", 0)
         attack_rounds = [r for r in self.rounds
                          if r.get("round", 0) >= start_round]
         n_attack = len(attack_rounds)
 
         def avg_attack(key):
-            if not attack_rounds:
-                return 0.0
-            vals = [r.get(key, 0) for r in attack_rounds]
-            return sum(vals) / n_attack
+            return _nanmean([r.get(key) for r in attack_rounds])
 
         lines = [
             "=" * 60,
@@ -323,6 +330,15 @@ class MetricsTracker:
             vals = [r.get(key, 0) for r in self.rounds]
             return sum(vals) / n if n else 0
 
+        # P/R/F1 are NaN before attack starts and for defenses without
+        # flagging — skip NaN to avoid polluting the average.
+        start_round = self.metadata.get("start_round", 0)
+        attack_rounds = [r for r in self.rounds
+                         if r.get("round", 0) >= start_round]
+
+        def avg_attack(key):
+            return _nanmean([r.get(key) for r in attack_rounds])
+
         lines = [
             "=" * 60,
             "SUMMARY: DP-SGD Decentralized Federated Learning",
@@ -332,9 +348,9 @@ class MetricsTracker:
             f"Final test loss:            {last.get('test_loss', 0):.4f}",
             f"Final epsilon:              {last.get('epsilon', 0):.2f}",
             f"Best alpha:                 {last.get('best_alpha', 'N/A')}",
-            f"Avg precision:              {avg('precision'):.4f}",
-            f"Avg recall:                 {avg('recall'):.4f}",
-            f"Avg F1 score:               {avg('f1_score'):.4f}",
+            f"Avg precision:              {avg_attack('precision'):.4f}",
+            f"Avg recall:                 {avg_attack('recall'):.4f}",
+            f"Avg F1 score:               {avg_attack('f1_score'):.4f}",
             f"Avg update norm (honest):   {avg('mean_update_norm_honest'):.4f}",
             f"Avg update norm (attacker): {avg('mean_update_norm_attacker'):.4f}",
         ]

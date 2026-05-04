@@ -534,9 +534,41 @@ class BaseSimulator(ABC):
         accuracy = np.mean([v["accuracy"] for v in honest_evals.values()])
         test_loss = np.mean([v["test_loss"] for v in honest_evals.values()])
 
-        precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 1.0
-        recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        # Per-node P/R/F1 (NaN when undefined). Each honest active node h
+        # classifies its neighbors as flagged/clean → its own (TP, FP, FN, TN)
+        # over its neighborhood. Global P/R/F1 = macro-mean over honest active
+        # nodes only (attackers excluded). Skip-NaN: a node with no flags has
+        # P undefined; a node with no attacker neighbor has R undefined.
+        # See docs/p-r-f1-detection-metric.md.
+        per_node_pr: Dict[int, tuple] = {}
+        p_vals: list = []
+        r_vals: list = []
+        f1_vals: list = []
+        for nid in self.nodes:
+            tp, fp, fn, tn = per_node_detection[nid]
+            if tp + fp + fn + tn == 0:
+                # Inactive (Poisson sampling) or aggregator skipped this node.
+                per_node_pr[nid] = (float("nan"), float("nan"), float("nan"))
+                continue
+            p = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
+            r = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
+            if np.isnan(p) or np.isnan(r):
+                f = float("nan")
+            else:
+                f = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+            per_node_pr[nid] = (p, r, f)
+            if nid in self.attacker_ids:
+                continue  # attackers excluded from global metric
+            if not np.isnan(p):
+                p_vals.append(p)
+            if not np.isnan(r):
+                r_vals.append(r)
+            if not np.isnan(f):
+                f1_vals.append(f)
+
+        precision = float(np.mean(p_vals)) if p_vals else float("nan")
+        recall = float(np.mean(r_vals)) if r_vals else float("nan")
+        f1 = float(np.mean(f1_vals)) if f1_vals else float("nan")
 
         update_norms = {nid: float(u.norm().item()) for nid, u in updates.items()}
         honest_norms = [update_norms[n] for n in update_norms if n not in self.attacker_ids]
@@ -547,10 +579,7 @@ class BaseSimulator(ABC):
             _known = {"accuracy", "test_loss", "precision", "recall",
                       "f1_score", "update_norm", "is_attacker"}
             for nid in self.nodes:
-                tp, fp, fn, tn = per_node_detection[nid]
-                p = tp / (tp + fp) if (tp + fp) > 0 else 1.0
-                r = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                nf1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+                p, r, nf1 = per_node_pr[nid]
                 nd = {
                     "accuracy": eval_results[nid]["accuracy"],
                     "test_loss": eval_results[nid]["test_loss"],
@@ -585,6 +614,10 @@ class BaseSimulator(ABC):
                 mean_update_norm_attacker=float(np.mean(attacker_norms)) if attacker_norms else 0.0,
                 best_alpha=self.accountant.get_best_alpha() if self.accountant else None,
                 precision=precision, recall=recall,
+                # Raw micro-counts (incl. attackers) kept for diagnostic only.
+                # Headline P/R/F1 above are macro-mean over honest active nodes.
+                total_tp_all=int(total_tp), total_fp_all=int(total_fp),
+                total_fn_all=int(total_fn), total_tn_all=int(total_tn),
                 **defense_round)
             if extra_round_metrics:
                 round_metrics.update(extra_round_metrics)

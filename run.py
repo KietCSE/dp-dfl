@@ -39,6 +39,7 @@ import dpfl.algorithms.krum.krum_aggregator  # noqa: F401
 import dpfl.algorithms.trimmed_mean.trimmed_mean_aggregator  # noqa: F401
 import dpfl.algorithms.fltrust.fltrust_aggregator  # noqa: F401
 import dpfl.algorithms.flame.flame_aggregator  # noqa: F401
+import dpfl.algorithms.balance.balance_aggregator  # noqa: F401
 
 from dpfl.registry import DATASETS, NOISE_MECHANISMS, AGGREGATORS, ATTACKS, ACCOUNTANTS
 from dpfl.experiment_runner import run_experiment
@@ -154,10 +155,11 @@ def build_fedavg(config, dataset_cls, model_cls, param_dim, tracker, device):
 # DP-FedAvg reuses FedAvgSimulator (weighted avg) with DP-SGD noise
 build_dp_fedavg = build_fedavg
 
-# Krum, Trimmed Mean, FLAME reuse DFLSimulator
+# Krum, Trimmed Mean, FLAME, BALANCE reuse DFLSimulator (DP-SGD + plug-in aggregator)
 build_krum = build_dpsgd_kurtosis
 build_trimmed_mean = build_dpsgd_kurtosis
 build_flame = build_dpsgd_kurtosis
+build_balance = build_dpsgd_kurtosis
 
 
 def build_cfl_fedavg(config, dataset_cls, model_cls, param_dim, tracker, device):
@@ -290,6 +292,12 @@ ALGORITHMS = {
         "build_fn": build_adaptive_noise,
         "prefix": "adaptive_noise",
         "default_config": "config/adaptive_noise.yaml",
+    },
+    "balance": {
+        "config_cls": "dpfl.config.ExperimentConfig",
+        "build_fn": build_balance,
+        "prefix": "balance",
+        "default_config": "config/balance.yaml",
     },
 }
 

@@ -78,17 +78,19 @@ class TrustAwareDFLSimulator(BaseSimulator):
     def _build_packet(self, node: TrustAwareNode, raw_update: torch.Tensor,
                       rho_t: float):
         """Per-layer clip → Gaussian noise. Returns (own_clipped_flat,
-        packet_flat, sigma_sq_per_layer). Attackers skip noise but still get
-        clipped (their own clipping history is also tracked)."""
+        packet_flat, sigma_sq_per_layer). Attackers bypass clip + noise
+        entirely (model-poisoning by spec) — raw_update propagates as-is to
+        both own_clipped and packet so D_threshold and aggregator see the
+        full perturbed update."""
         layers = list(torch.split(raw_update, self._layer_sizes))
+        if node.is_attacker:
+            return raw_update, raw_update.clone(), [0.0] * len(layers)
+
         for li, layer in enumerate(layers):
             node.clip_history[li].append(layer.norm(2).item())
         thresholds = self.clipper.get_thresholds(node.clip_history)
         clipped_layers = self.clipper.clip(layers, thresholds)
         own_clipped = torch.cat([cl.reshape(-1) for cl in clipped_layers])
-
-        if node.is_attacker:
-            return own_clipped, own_clipped.clone(), [0.0] * len(layers)
 
         sigma_sqs: List[float] = []
         noisy_layers: List[torch.Tensor] = []

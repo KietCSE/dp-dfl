@@ -53,10 +53,15 @@ class NoiseGameDFLSimulator(BaseSimulator):
             # Phase 1: Local training (no noise — game handles it)
             raw_updates, all_steps = self._train_all_nodes(apply_noise=False, round_t=t)
 
-            # L2-norm clip each update
+            # L2-norm clip each update — attackers bypass server clip
+            # (model-poisoning by spec); aggregator sees their full perturbed
+            # update without any sensitivity bound.
             C = self.config.dp.clip_bound
             clipped = {}
             for nid, upd in raw_updates.items():
+                if self.nodes[nid].is_attacker:
+                    clipped[nid] = upd
+                    continue
                 norm = upd.norm()
                 factor = min(1.0, C / (norm + 1e-12))
                 clipped[nid] = upd * factor

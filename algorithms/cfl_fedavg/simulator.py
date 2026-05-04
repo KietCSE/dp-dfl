@@ -72,11 +72,17 @@ class CFLSimulator(BaseSimulator):
 
             # Phase 3: Server-side FlatClip each Δ_k for k ∈ C^t.
             # Inactive nodes' updates exist but are ignored (not in active_ids).
+            # Attackers bypass server clip entirely (model-poisoning by spec) —
+            # this breaks DP sensitivity bound when attackers are present;
+            # honest-only DP guarantee still holds.
             clipped: list = []
             for nid in active_ids:
                 if nid not in updates:
                     continue
-                clipped.append(self._flat_clip(updates[nid], S))
+                if self.nodes[nid].is_attacker:
+                    clipped.append(updates[nid])
+                else:
+                    clipped.append(self._flat_clip(updates[nid], S))
 
             # Phase 4: Aggregate f̃_f = Σ Δ_k / (qW). Empty batch → no update.
             if clipped:

@@ -27,7 +27,7 @@ training:
   vmap_chunk: 0
 
 dp:
-  noise_mode: post_training      # User-level DP: train SGD → clip update → noise
+  noise_mode: none      # User-level DP: train SGD → clip update → noise
   clip_bound: 0.0234
   noise_mult: 1.45               # gives ε≈16 over 50 rounds (q=0.5)
   delta: 1.0e-5
@@ -37,16 +37,16 @@ dp:
     alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
   sampling_rate: 0.5
 
-attack:
-  type: scale
-  scale_factor: -10.0
-  start_round: 10
+# attack:
+#   type: scale
+#   scale_factor: -10.0
+#   start_round: 10
 
 # Alternative attack: Label Flipping (data poisoning)
-# attack:
-#   type: label_flip
-#   flip_mode: rotate            # rotate | random | negate
-#   start_round: 10
+attack:
+  type: label_flip
+  flip_mode: rotate            # rotate | random | negate
+  start_round: 10
 
 # Alternative attack: Sign Flipping (model poisoning)
 # attack:

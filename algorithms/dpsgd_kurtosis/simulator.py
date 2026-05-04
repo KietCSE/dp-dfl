@@ -23,6 +23,11 @@ class DFLSimulator(BaseSimulator):
             # identical active_ids across algorithms for fair comparison.
             active_ids = self._sample_active_nodes(t)
 
+            # Pass round info to aggregators that need it (e.g. BALANCE uses
+            # exp(-K·(t+1)/T) decay schedule). Duck-typed: opt-in per aggregator.
+            if hasattr(self.aggregator, "set_round"):
+                self.aggregator.set_round(t, self.config.training.n_rounds)
+
             # Step 1: All nodes train with DP-SGD noise (apply_noise=True)
             updates, all_steps = self._train_all_nodes(apply_noise=True, round_t=t)
 
