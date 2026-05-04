@@ -34,7 +34,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
 
     def __init__(self, theta: float = 1.2, gamma: float = 3.0, kappa: float = 0.2,
                  alpha_T: float = 0.85, T_min: float = 0.4, beta_soft: float = 8.0,
-                 beta_m: float = 0.9, cos_threshold: float = -0.1, **_kwargs):
+                 beta_m: float = 0.9, cos_threshold: float = -0.1, alpha_self: float = 0.7, **_kwargs):
         # theta/gamma/kappa are consumed by the simulator (D_threshold compute);
         # parked on the aggregator so a single config block drives everything.
         self.theta = theta
@@ -45,6 +45,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
         self.beta_soft = beta_soft
         self.beta_m = beta_m
         self.cos_threshold = cos_threshold
+        self.alpha_self = alpha_self
 
     def aggregate(self, own_update: torch.Tensor, own_params: torch.Tensor,
                   neighbor_updates: Dict[int, torch.Tensor],
@@ -115,8 +116,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
                 flagged_ids = list(neighbor_updates.keys())
 
         # Step 4.3 — momentum buffer + additive global step
-        alpha_self = 0.7
-        S_agg = alpha_self * own_update + (1.0 - alpha_self) * S_agg
+        S_agg = self.alpha_self * own_update + (1.0 - self.alpha_self) * S_agg
         if V_agg_prev is None:
             V_agg_prev = torch.zeros_like(own_update)
         V_agg = self.beta_m * V_agg_prev + (1.0 - self.beta_m) * S_agg

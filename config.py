@@ -155,6 +155,7 @@ class TrustConfig:
     beta_m: float = 0.9         # momentum factor
     # Gating Mechanism (Option B)
     cos_threshold: float = -0.1 # reject updates with cosine similarity below this
+    alpha_self: float = 0.7     # self-confidence threshold
 
 @dataclass
 class TrustAwareExperimentConfig(BaseExperimentConfig):
