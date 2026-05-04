@@ -219,7 +219,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 tp, fp, fn, tn = self._compute_detection(
                     result.flagged_ids, result.clean_ids, node.neighbors,
                     attack_active=attack_active)
-                if node.is_attacker:
+                if attack_active and node.is_attacker:
                     tp, fp, fn, tn = 0, 0, 0, 0
                 per_node_det[node.id] = (tp, fp, fn, tn)
                 tp_all += tp; fp_all += fp; fn_all += fn; tn_all += tn
