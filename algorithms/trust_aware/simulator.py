@@ -112,9 +112,9 @@ class TrustAwareDFLSimulator(BaseSimulator):
         weighted_var /= max(self.param_dim, 1)
         c_dp = self.tc.theta * math.sqrt(max(weighted_var, 0.0))
         # Decay term: γ · exp(-κ · t) · ||ΔW'_i||₂ / √D_total
-        rms_self = own_clipped.norm(2).item() / math.sqrt(max(self.param_dim, 1))
-        decay = self.tc.gamma * math.exp(-self.tc.kappa * (t / self.config.training.n_rounds)) * rms_self
-        return max(decay, c_dp)
+        # rms_self = own_clipped.norm(2).item() / math.sqrt(max(self.param_dim, 1))
+        # decay = self.tc.gamma * math.exp(-self.tc.kappa * (t / self.config.training.n_rounds)) * rms_self
+        return c_dp
 
     # ── Main loop ───────────────────────────────────────────────────────────
 
