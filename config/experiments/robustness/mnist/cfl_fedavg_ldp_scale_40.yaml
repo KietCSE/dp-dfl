@@ -1,0 +1,52 @@
+name: cfl_fedavg_ldp_scale_40_attack_mnist
+
+dataset:
+  name: mnist
+  split:
+    mode: iid
+    samples_per_node: 7000
+    alpha: 1.0                # ignored in iid mode
+
+model:
+  name: mlp
+  hidden_size: 64
+
+topology:
+  n_nodes: 500
+  n_attackers: 200
+  n_neighbors: 200
+  seed: 42
+
+training:
+  n_rounds: 200
+  local_epochs: 1
+  batch_size: 64
+  lr: 0.01
+  n_workers: 5
+  use_vectorized: true        # vmap path: ~30x speedup on GPU vs ThreadPool
+  vmap_chunk: 0               # 0 = no chunking (MLP fits at any N on 16GB)
+
+dp:
+  # CFL semantics: trainer plain SGD, server clips + noises post-aggregation.
+  noise_mode: none            # MUST be 'none' for CFL — client does plain SGD
+  clip_bound: 0.0234          # S — bound on ‖Δ_k‖ from data measurement
+  noise_mult: 0.8            # z — solved via scripts/solve_noise_mult.py
+  delta: 1.0e-5
+  epsilon_max: 8.0
+  accountant: renyi_dpsgd
+  accountant_params:
+    alpha_list: [1.01, 1.05, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 32, 50, 64, 100, 128, 256, 512, 1000]
+  sampling_rate: 0.05          # q — Poisson client subsampling
+
+attack:
+  type: scale
+  scale_factor: -5.0
+  start_round: 50
+
+aggregation:
+  type: fedavg                # placeholder — CFLSimulator does its own server-side aggregation
+  params: {}
+
+output_dir: ./results
+device: auto
+seed: 42

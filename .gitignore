@@ -12,4 +12,5 @@ clean-metrics-epsilon-filter.py
 clean-metrics.py
 # docs/
 .agent/
+logs/
 noise_game_*/
