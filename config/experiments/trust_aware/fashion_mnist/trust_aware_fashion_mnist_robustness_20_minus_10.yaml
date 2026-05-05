@@ -1,5 +1,5 @@
 dataset:
-    name: mnist
+    name: fashion_mnist
     split:
         mode: iid
         samples_per_node: 1000
