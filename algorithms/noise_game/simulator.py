@@ -47,6 +47,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
     def run(self):
         """Main loop: T rounds of noise-game DFL."""
         for t in range(self.config.training.n_rounds):
+            attack_active = t >= self.config.attack.start_round
             # Step 0: Deterministic Poisson client subsampling.
             active_ids = self._sample_active_nodes(t)
 
@@ -59,7 +60,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
             C = self.config.dp.clip_bound
             clipped = {}
             for nid, upd in raw_updates.items():
-                if self.nodes[nid].is_attacker:
+                if attack_active and self.nodes[nid].is_attacker:
                     clipped[nid] = upd
                     continue
                 norm = upd.norm()
@@ -74,7 +75,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
             sigma_dps = {}
             for nid, node in self.nodes.items():
                 g = clipped[nid]
-                if node.is_attacker:
+                if attack_active and node.is_attacker:
                     final_updates[nid] = g
                     continue
                 if nid not in active_ids:
@@ -133,7 +134,6 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 self.game_mechanism.commit_round_rdp(avg_sigma_dp_round)
 
             # Phase 3: Aggregation (active nodes only)
-            attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
             per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
             node_agg_metrics = {nid: {} for nid in self.nodes}
@@ -151,7 +151,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 node_agg_metrics[node.id] = result.node_metrics
 
                 # Two-track model update
-                if self.ng.two_track and not node.is_attacker:
+                if self.ng.two_track and not (attack_active and node.is_attacker):
                     agg_update = result.new_params - node.model.get_flat_params()
                     node.update_two_track(clipped[node.id], agg_update)
                 else:
@@ -195,7 +195,7 @@ class NoiseGameDFLSimulator(BaseSimulator):
                 # report their current cumulative ε in per_node_eps so the
                 # round-level max/avg reflects all honest users.
                 for nid, node in self.nodes.items():
-                    if node.is_attacker:
+                    if attack_active and node.is_attacker:
                         continue
 
                     if nid in sigma_dps and sigma_dps[nid] > 0:

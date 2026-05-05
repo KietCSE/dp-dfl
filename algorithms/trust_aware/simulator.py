@@ -83,7 +83,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
         both own_clipped and packet so D_threshold and aggregator see the
         full perturbed update."""
         layers = list(torch.split(raw_update, self._layer_sizes))
-        if node.is_attacker:
+        if attack_active and node.is_attacker:
             return raw_update, raw_update.clone(), [0.0] * len(layers)
 
         for li, layer in enumerate(layers):
@@ -234,7 +234,7 @@ class TrustAwareDFLSimulator(BaseSimulator):
                 z_eff = math.sqrt(2.0 / max(rho_t, 1e-12))
                 L = max(len(self._layer_sizes), 1)  # # layers per Gaussian round
                 for nid, node in self.nodes.items():
-                    if node.is_attacker:
+                    if attack_active and node.is_attacker:
                         continue
                     acc = self._per_node_acc.get(nid)
                     if acc is None:
