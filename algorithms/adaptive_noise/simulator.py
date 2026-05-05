@@ -160,17 +160,18 @@ class AdaptiveNoiseSimulator(BaseSimulator):
             #   algorithms for fair comparison.
             # - Attackers always active (within attack window).
             active_ids = self._sample_active_nodes(t)
+            attack_active = t >= self.config.attack.start_round
 
-            # Snapshot W_old for honest active nodes BEFORE training. Needed
-            # to reset model state to (W_old + Δw̃) after clip+noise so the
-            # aggregator contract `own_params - own_update == W_old` holds.
-            # Attackers don't need a snapshot — their noisy_update is the raw
-            # poisoned delta, so own_params - own_update == W_old already.
+            # Snapshot W_old for nodes that will get clipped+noised updates.
+            # Pre-attack: attacker treated as honest, needs snapshot for reset.
+            # Post-attack: attacker submits raw poisoned delta, no reset needed
+            # (own_params - own_update == W_old holds naturally).
             W_old_map: Dict[int, torch.Tensor] = {}
             for nid in active_ids:
                 node = self.nodes[nid]
-                if not node.is_attacker:
-                    W_old_map[nid] = node.model.get_flat_params().clone()
+                if attack_active and node.is_attacker:
+                    continue
+                W_old_map[nid] = node.model.get_flat_params().clone()
 
             # BƯỚC 1: local training — train ALL nodes (simulation cost), then
             # filter to active only. For attacker/frozen logic downstream.
@@ -185,12 +186,14 @@ class AdaptiveNoiseSimulator(BaseSimulator):
                 local_losses[nid] = self._compute_local_loss(node)
                 node.last_loss = local_losses[nid]
 
-            # BƯỚC 3: user-level clip + adaptive Gaussian noise for active honest.
-            # Inactive nodes contribute nothing this round (skipped in aggregation).
+            # BƯỚC 3: user-level clip + adaptive Gaussian noise. Pre-attack,
+            # attackers are clipped+noised like honest (DP applies). Post-attack,
+            # they bypass to allow model-poisoning. Inactive nodes contribute
+            # nothing this round (skipped in aggregation).
             noisy_updates: Dict[int, torch.Tensor] = {}
             for nid in active_ids:
                 node = self.nodes[nid]
-                if node.is_attacker:
+                if attack_active and node.is_attacker:
                     noisy_updates[nid] = raw_updates[nid]
                     continue
                 noisy_updates[nid] = self._clip_and_noise(
@@ -200,9 +203,10 @@ class AdaptiveNoiseSimulator(BaseSimulator):
             # aggregator's contract `own_params - own_update == W_old` holds.
             # Without this, models stay at (W_old + Δw_raw) → aggregator
             # back-out yields a spurious (Δw_raw - Δw̃) term per round.
+            # Pre-attack attacker also gets reset (treated as honest).
             for nid, noisy in noisy_updates.items():
                 node = self.nodes[nid]
-                if node.is_attacker or nid not in W_old_map:
+                if (attack_active and node.is_attacker) or nid not in W_old_map:
                     continue
                 node.model.set_flat_params(W_old_map[nid] + noisy)
 
@@ -213,7 +217,6 @@ class AdaptiveNoiseSimulator(BaseSimulator):
             per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
             node_agg_metrics = {nid: {} for nid in self.nodes}
             extra_node = {}
-            attack_active = t >= self.config.attack.start_round
             total_tp = total_fp = total_fn = total_tn = 0
 
             for node in self.nodes.values():
@@ -297,7 +300,7 @@ class AdaptiveNoiseSimulator(BaseSimulator):
             # node.sigma_n is still this round's value, so fall back to it.
             if self.rdp is not None:
                 for nid, node in self.nodes.items():
-                    if node.is_attacker or node.frozen:
+                    if (attack_active and node.is_attacker) or node.frozen:
                         continue
                     sigma_for_step = extra_node.get(nid, {}).get(
                         "sigma_n", node.sigma_n)

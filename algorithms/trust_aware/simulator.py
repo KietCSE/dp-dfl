@@ -79,9 +79,9 @@ class TrustAwareDFLSimulator(BaseSimulator):
                       rho_t: float, attack_active: bool):
         """Per-layer clip → Gaussian noise. Returns (own_clipped_flat,
         packet_flat, sigma_sq_per_layer). Attackers bypass clip + noise
-        entirely (model-poisoning by spec) — raw_update propagates as-is to
-        both own_clipped and packet so D_threshold and aggregator see the
-        full perturbed update."""
+        when attack is active (model-poisoning by spec) — pre-attack rounds
+        treat them as honest with normal DP applied, matching base_simulator's
+        attack_active-gated bypass in _train_all_nodes."""
         layers = list(torch.split(raw_update, self._layer_sizes))
         if attack_active and node.is_attacker:
             return raw_update, raw_update.clone(), [0.0] * len(layers)
