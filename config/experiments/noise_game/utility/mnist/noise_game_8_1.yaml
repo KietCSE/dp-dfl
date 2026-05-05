@@ -1,3 +1,5 @@
+name: noise_game_8_1_utility_mnist
+
 dataset:
   name: mnist
   split:

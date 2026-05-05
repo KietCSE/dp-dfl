@@ -89,29 +89,29 @@ RUNS_TRUST_AWARE="
 "
 
 RUNS_NOISE_GAME="
-  # ── Note: noise_game has its own folder hierarchy. To run these,
-  #    change FOLDER above to \"noise_game\". Paths below are relative
-  # #    to config/experiments/noise_game/.
-  # robustness/mnist/20/noise_game_scale_1.yaml
-  # robustness/mnist/20/noise_game_scale_2.yaml
-  # robustness/mnist/20/noise_game_scale_3.yaml
-  # robustness/mnist/40/noise_game_scale_1.yaml
-  # robustness/mnist/40/noise_game_scale_2.yaml
-  # robustness/mnist/40/noise_game_scale_3.yaml
-  # robustness/mnist/60/noise_game_scale_1.yaml
-  # robustness/mnist/60/noise_game_scale_2.yaml
-  # robustness/mnist/60/noise_game_scale_3.yaml
-  # robustness/fashion_mnist/20/noise_game_scale_1.yaml
-  # robustness/fashion_mnist/20/noise_game_scale_2.yaml
-  # robustness/fashion_mnist/20/noise_game_scale_3.yaml
-  # robustness/fashion_mnist/40/noise_game_scale_1.yaml
-  # robustness/fashion_mnist/40/noise_game_scale_2.yaml
-  # robustness/fashion_mnist/40/noise_game_scale_3.yaml
-  # robustness/fashion_mnist/60/noise_game_scale_1.yaml
-  # robustness/fashion_mnist/60/noise_game_scale_2.yaml
-  # robustness/fashion_mnist/60/noise_game_scale_3.yaml
-  # utility/mnist/noise_game_8_1.yaml
-  # utility/fashion_mnist/noise_game_8_1.yaml
+  # ── noise_game has its own folder hierarchy. Paths starting with a
+  #    known top-level dir (noise_game/ | robustness/ | utility/) are
+  #    treated as relative to config/experiments/ regardless of FOLDER.
+  noise_game/robustness/mnist/20/noise_game_scale_1.yaml
+  noise_game/robustness/mnist/20/noise_game_scale_2.yaml
+  noise_game/robustness/mnist/20/noise_game_scale_3.yaml
+  noise_game/robustness/mnist/40/noise_game_scale_1.yaml
+  noise_game/robustness/mnist/40/noise_game_scale_2.yaml
+  noise_game/robustness/mnist/40/noise_game_scale_3.yaml
+  noise_game/robustness/mnist/60/noise_game_scale_1.yaml
+  noise_game/robustness/mnist/60/noise_game_scale_2.yaml
+  noise_game/robustness/mnist/60/noise_game_scale_3.yaml
+  noise_game/robustness/fashion_mnist/20/noise_game_scale_1.yaml
+  noise_game/robustness/fashion_mnist/20/noise_game_scale_2.yaml
+  noise_game/robustness/fashion_mnist/20/noise_game_scale_3.yaml
+  noise_game/robustness/fashion_mnist/40/noise_game_scale_1.yaml
+  noise_game/robustness/fashion_mnist/40/noise_game_scale_2.yaml
+  noise_game/robustness/fashion_mnist/40/noise_game_scale_3.yaml
+  noise_game/robustness/fashion_mnist/60/noise_game_scale_1.yaml
+  noise_game/robustness/fashion_mnist/60/noise_game_scale_2.yaml
+  noise_game/robustness/fashion_mnist/60/noise_game_scale_3.yaml
+  noise_game/utility/mnist/noise_game_8_1.yaml
+  noise_game/utility/fashion_mnist/noise_game_8_1.yaml
 "
 
 RUNS_FLTRUST=""
@@ -144,6 +144,28 @@ if [ ! -d "$ROOT" ]; then
   echo "Available: $(ls config/experiments/ 2>/dev/null | tr '\n' ' ')"
   exit 1
 fi
+
+# Snapshot top-level subdirs of config/experiments/ so we can detect
+# absolute-style paths (e.g. "noise_game/...") that should bypass
+# the FOLDER prefix.
+TOP_DIRS=()
+for d in config/experiments/*/; do
+  [ -d "$d" ] && TOP_DIRS+=("$(basename "$d")")
+done
+
+# Resolve a config path. If it starts with a known top-level dir,
+# treat as relative to config/experiments/. Otherwise prepend $ROOT/.
+resolve_cfg() {
+  local cfg="$1"
+  local first="${cfg%%/*}"
+  for d in "${TOP_DIRS[@]}"; do
+    if [ "$first" = "$d" ]; then
+      echo "config/experiments/$cfg"
+      return
+    fi
+  done
+  echo "$ROOT/$cfg"
+}
 
 # Map algo name (lowercase with dashes) → RUNS_* var name
 algo_to_var() {
@@ -192,7 +214,8 @@ for i in "${!PAIRS[@]}"; do
     "$num" "$TOTAL" "$(date +%H:%M:%S)" "$algo" "$cfg"
   scenario_start=$(date +%s)
 
-  if python run.py -a "$algo" "$ROOT/$cfg" > "$log" 2>&1; then
+  full="$(resolve_cfg "$cfg")"
+  if python run.py -a "$algo" "$full" > "$log" 2>&1; then
     elapsed=$(( $(date +%s) - scenario_start ))
     printf "[%2d/%d] %s  OK   [%-14s] %s  (%ds)  -> %s\n" \
       "$num" "$TOTAL" "$(date +%H:%M:%S)" "$algo" "$cfg" "$elapsed" "$log"

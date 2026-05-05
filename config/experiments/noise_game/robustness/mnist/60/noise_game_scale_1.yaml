@@ -1,3 +1,5 @@
+name: noise_game_scale_v1_60pct_mnist
+
 dataset:
   name: mnist
   split:

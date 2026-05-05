@@ -1,3 +1,5 @@
+name: noise_game_scale_v1_60pct_fashion_mnist
+
 dataset:
   name: fashion_mnist
   split:
