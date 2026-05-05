@@ -99,7 +99,7 @@ def build_trust_aware(config, dataset_cls, model_cls, param_dim, tracker, device
     aggregator = AGGREGATORS["trust_aware_d2b"](
         theta=tc.theta, gamma=tc.gamma, kappa=tc.kappa,
         alpha_T=tc.alpha_T, T_min=tc.T_min, beta_soft=tc.beta_soft,
-        beta_m=tc.beta_m, cos_threshold=tc.cos_threshold, alpha_self=tc.alpha_self)
+        beta_m=tc.beta_m, cos_threshold=tc.cos_threshold, alpha_self=tc.alpha_self, norm_threshold=tc.norm_threshold)
     # ε reporting via Opacus SGM — matches Step 2.3 ε^(t)(α)=α·ρ_t/4 at q=1.
     accountant = _build_accountant(config)
     return TrustAwareDFLSimulator(

@@ -156,6 +156,7 @@ class TrustConfig:
     # Gating Mechanism (Option B)
     cos_threshold: float = -0.1 # reject updates with cosine similarity below this
     alpha_self: float = 0.7     # self-confidence threshold
+    norm_threshold: float = 3.0 # reject updates with norm smaller than this
 
 @dataclass
 class TrustAwareExperimentConfig(BaseExperimentConfig):

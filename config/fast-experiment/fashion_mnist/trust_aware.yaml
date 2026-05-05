@@ -1,22 +1,23 @@
+name: test_trust_aware_no_attack
 dataset:
-    name: mnist
+    name: fashion_mnist
     split:
         mode: iid
-        samples_per_node: 1000
+        samples_per_node: 2000
         alpha: 1.0 # ignored in iid mode
 
 model:
-    name: mlp
+    name: lenet5
     hidden_size: 64
 
 topology:
-    n_nodes: 500
-    n_attackers: 300
-    n_neighbors: 200
+    n_nodes: 50
+    n_attackers: 0
+    n_neighbors: 30
     seed: 42
 
 training:
-    n_rounds: 150
+    n_rounds: 50
     local_epochs: 1
     batch_size: 64
     lr: 0.01
@@ -27,7 +28,7 @@ training:
 dp:
     noise_mode: none # D2B-DP injects per-layer Gaussian noise itself (Step 2.2)
     delta: 1.0e-5
-    epsilon_max: 8.0
+    epsilon_max: 800000000
     accountant: renyi_dpsgd
     accountant_params:
         alpha_list:
@@ -58,12 +59,23 @@ dp:
                 512,
                 1000,
             ]
-    sampling_rate: 0.05
+    sampling_rate: 0.5
 
 attack:
     type: scale
-    scale_factor: -5.0
-    start_round: 50 # never activates — utility-only run
+    scale_factor: -10.0
+    start_round: 25 # never activates — utility-only run
+
+# Alternative attack: Label Flipping (data poisoning)
+# attack:
+#     type: label_flip
+#     flip_mode: rotate # rotate | random | negate
+#     start_round: 25
+
+# Alternative attack: Sign Flipping (model poisoning)
+# attack:
+#     type: sign_flip
+#     start_round: 25
 
 aggregation:
     type: trust_aware_d2b
@@ -73,25 +85,23 @@ trust:
     # Step 2.1 — adaptive clip
     k: 5
     # Step 2.2 — DP budget schedule  ρ^(t) = min((1+βt)·ρ_min, ρ_max)
-    rho_min: 0.3
-    rho_max: 5.0
-    beta: 0.05
+    rho_min: 0.08
+    rho_max: 10.0
+    beta: 0.01
     # Step 3.3 — anomaly threshold
-    theta: 1.5
-    gamma: 3.0
-    kappa: 0.5
+    theta: 2
+    gamma: 3
+    kappa: 0.3
     # Step 4.2 — trust EMA
     alpha_T: 0.5
     trust_init: 1.0
     # Step 4.3 — softmax aggregation + momentum
     T_min: 0.4
-    beta_soft: 5.0
-    beta_m: 0.6
-    cos_threshold: -0.1
+    beta_soft: 5
+    beta_m: 0.65
+    cos_threshold: -0.05
     alpha_self: 0.7
-    norm_threshold: 3.0
 
-name: test_cos_threshold_minus_0_1
-output_dir: ./results/experiments/test
+output_dir: ./results/trust_aware/fashion_mnist
 device: auto
 seed: 42

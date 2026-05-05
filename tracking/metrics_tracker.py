@@ -179,9 +179,9 @@ class MetricsTracker:
         eps_std = var ** 0.5
 
         return [
-            "=== PER-NODE PRIVACY COST (final round) ===",
-            *rows,
-            "-" * 60,
+            # "=== PER-NODE PRIVACY COST (final round) ===",
+            # *rows,
+            # "-" * 60,
             f"eps_system (max honest): {eps_max:.4f}",
             f"eps_avg (honest):        {eps_avg:.4f}",
             f"eps_std (honest):        {eps_std:.4f}",
