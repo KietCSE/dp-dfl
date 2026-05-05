@@ -87,7 +87,7 @@ class TrustAwareD2BAggregator(BaseAggregator):
                     own_update.unsqueeze(0), s_j.unsqueeze(0)).item()
                 p_dist = math.exp(-d_ij / max(D_threshold, 1e-12))
                 q_ij = p_dist
-                if (cos_ij < self.cos_threshold) or (s_j.norm(2).item() >= self.norm_threshold * own_update.norm(2).item()):
+                if (cos_ij < self.cos_threshold): # or (s_j.norm(2).item() >= self.norm_threshold * own_update.norm(2).item()):
                     q_ij = 0.0
                 p_cos = max(0.0, cos_ij) # Just for logging
                 prev_t = trust_scores.get(j, 1.0)
