@@ -44,29 +44,29 @@ FOLDER="robustness"
 #      adaptive-noise | balance
 
 RUNS_DP_FEDAVG="
-  mnist/dfl_fedavg_ldp_scale_-5.yaml
-  mnist/dfl_fedavg_ldp_scale_-10.yaml
-  mnist/dfl_fedavg_ldp_scale_-20.yaml
-  mnist/dfl_fedavg_ldp_scale_40.yaml
-  mnist/dfl_fedavg_ldp_scale_60.yaml
-  fashion_mnist/dfl_fedavg_ldp_scale_-5.yaml
-  fashion_mnist/dfl_fedavg_ldp_scale_-10.yaml
-  fashion_mnist/dfl_fedavg_ldp_scale_-20.yaml
-  fashion_mnist/dfl_fedavg_ldp_scale_40.yaml
-  fashion_mnist/dfl_fedavg_ldp_scale_60.yaml
+  # mnist/dfl_fedavg_ldp_scale_-5.yaml
+  # mnist/dfl_fedavg_ldp_scale_-10.yaml
+  # mnist/dfl_fedavg_ldp_scale_-20.yaml
+  # mnist/dfl_fedavg_ldp_scale_40.yaml
+  # mnist/dfl_fedavg_ldp_scale_60.yaml
+  # fashion_mnist/dfl_fedavg_ldp_scale_-5.yaml
+  # fashion_mnist/dfl_fedavg_ldp_scale_-10.yaml
+  # fashion_mnist/dfl_fedavg_ldp_scale_-20.yaml
+  # fashion_mnist/dfl_fedavg_ldp_scale_40.yaml
+  # fashion_mnist/dfl_fedavg_ldp_scale_60.yaml
 "
 
 RUNS_CFL_FEDAVG="
-  mnist/cfl_fedavg_ldp_scale_-5.yaml
-  mnist/cfl_fedavg_ldp_scale_-10.yaml
-  mnist/cfl_fedavg_ldp_scale_-20.yaml
-  mnist/cfl_fedavg_ldp_scale_40.yaml
-  mnist/cfl_fedavg_ldp_scale_60.yaml
-  fashion_mnist/cfl_fedavg_ldp_scale_-5.yaml
-  fashion_mnist/cfl_fedavg_ldp_scale_-10.yaml
-  fashion_mnist/cfl_fedavg_ldp_scale_-20.yaml
-  fashion_mnist/cfl_fedavg_ldp_scale_40.yaml
-  fashion_mnist/cfl_fedavg_ldp_scale_60.yaml
+  # mnist/cfl_fedavg_ldp_scale_-5.yaml
+  # mnist/cfl_fedavg_ldp_scale_-10.yaml
+  # mnist/cfl_fedavg_ldp_scale_-20.yaml
+  # mnist/cfl_fedavg_ldp_scale_40.yaml
+  # mnist/cfl_fedavg_ldp_scale_60.yaml
+  # fashion_mnist/cfl_fedavg_ldp_scale_-5.yaml
+  # fashion_mnist/cfl_fedavg_ldp_scale_-10.yaml
+  # fashion_mnist/cfl_fedavg_ldp_scale_-20.yaml
+  # fashion_mnist/cfl_fedavg_ldp_scale_40.yaml
+  # fashion_mnist/cfl_fedavg_ldp_scale_60.yaml
 "
 
 RUNS_KRUM="
@@ -93,25 +93,25 @@ RUNS_NOISE_GAME="
   #    known top-level dir (noise_game/ | robustness/ | utility/) are
   #    treated as relative to config/experiments/ regardless of FOLDER.
   noise_game/robustness/mnist/20/noise_game_scale_1.yaml
-  noise_game/robustness/mnist/20/noise_game_scale_2.yaml
-  noise_game/robustness/mnist/20/noise_game_scale_3.yaml
-  noise_game/robustness/mnist/40/noise_game_scale_1.yaml
-  noise_game/robustness/mnist/40/noise_game_scale_2.yaml
-  noise_game/robustness/mnist/40/noise_game_scale_3.yaml
-  noise_game/robustness/mnist/60/noise_game_scale_1.yaml
-  noise_game/robustness/mnist/60/noise_game_scale_2.yaml
-  noise_game/robustness/mnist/60/noise_game_scale_3.yaml
-  noise_game/robustness/fashion_mnist/20/noise_game_scale_1.yaml
-  noise_game/robustness/fashion_mnist/20/noise_game_scale_2.yaml
-  noise_game/robustness/fashion_mnist/20/noise_game_scale_3.yaml
-  noise_game/robustness/fashion_mnist/40/noise_game_scale_1.yaml
-  noise_game/robustness/fashion_mnist/40/noise_game_scale_2.yaml
-  noise_game/robustness/fashion_mnist/40/noise_game_scale_3.yaml
-  noise_game/robustness/fashion_mnist/60/noise_game_scale_1.yaml
-  noise_game/robustness/fashion_mnist/60/noise_game_scale_2.yaml
-  noise_game/robustness/fashion_mnist/60/noise_game_scale_3.yaml
-  noise_game/utility/mnist/noise_game_8_1.yaml
-  noise_game/utility/fashion_mnist/noise_game_8_1.yaml
+  # noise_game/robustness/mnist/20/noise_game_scale_2.yaml
+  # noise_game/robustness/mnist/20/noise_game_scale_3.yaml
+  # noise_game/robustness/mnist/40/noise_game_scale_1.yaml
+  # noise_game/robustness/mnist/40/noise_game_scale_2.yaml
+  # noise_game/robustness/mnist/40/noise_game_scale_3.yaml
+  # noise_game/robustness/mnist/60/noise_game_scale_1.yaml
+  # noise_game/robustness/mnist/60/noise_game_scale_2.yaml
+  # noise_game/robustness/mnist/60/noise_game_scale_3.yaml
+  # noise_game/robustness/fashion_mnist/20/noise_game_scale_1.yaml
+  # noise_game/robustness/fashion_mnist/20/noise_game_scale_2.yaml
+  # noise_game/robustness/fashion_mnist/20/noise_game_scale_3.yaml
+  # noise_game/robustness/fashion_mnist/40/noise_game_scale_1.yaml
+  # noise_game/robustness/fashion_mnist/40/noise_game_scale_2.yaml
+  # noise_game/robustness/fashion_mnist/40/noise_game_scale_3.yaml
+  # noise_game/robustness/fashion_mnist/60/noise_game_scale_1.yaml
+  # noise_game/robustness/fashion_mnist/60/noise_game_scale_2.yaml
+  # noise_game/robustness/fashion_mnist/60/noise_game_scale_3.yaml
+  # noise_game/utility/mnist/noise_game_8_1.yaml
+  # noise_game/utility/fashion_mnist/noise_game_8_1.yaml
 "
 
 RUNS_FLTRUST=""

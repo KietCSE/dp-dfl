@@ -25,7 +25,7 @@ training:
 dp:
   noise_mode: none # noise-game self-manages strategic noise injection
   clip_bound: 1.0
-  delta: 1e-5
+  delta: 1.0e-5
   epsilon_max: 8.0
   accountant_params:
     alpha_list:
