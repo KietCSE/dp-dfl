@@ -1,0 +1,87 @@
+# BALANCE Byzantine-resilient aggregator (Nebula reference).
+# Filter neighbors via distance-to-local-model, then convex-combine with own.
+#   keep j iff  ||w_i - w_j|| <= A · exp(-K · (t+1)/T) · ||w_i||
+#   new_w_i = a · w_i + (1 - a) · (1/S) · Σ kept w_j
+# Reuses DFLSimulator (dpsgd_kurtosis simulator) → DP-SGD honest, scale-attack
+# attackers bypass clip+noise (model poisoning by spec).
+
+dataset:
+    name: mnist
+    split:
+        mode: iid
+        samples_per_node: 1000
+        alpha: 1.0 # ignored in iid mode
+
+model:
+    name: mlp
+    hidden_size: 64
+
+topology:
+    n_nodes: 500
+    n_attackers: 0
+    n_neighbors: 200
+    seed: 42
+
+training:
+    n_rounds: 150
+    local_epochs: 1
+    batch_size: 64
+    lr: 0.01
+    n_workers: 5
+    use_vectorized: true
+    vmap_chunk: 0
+
+dp:
+    noise_mode: none
+    clip_bound: 0.1
+    noise_mult: 1.0
+    delta: 1.0e-5
+    epsilon_max: 8.0
+    accountant: renyi_dpsgd
+    accountant_params:
+        alpha_list:
+            [
+                1.01,
+                1.05,
+                1.1,
+                1.25,
+                1.5,
+                1.75,
+                2,
+                2.5,
+                3,
+                4,
+                5,
+                6,
+                8,
+                10,
+                12,
+                16,
+                20,
+                32,
+                50,
+                64,
+                100,
+                128,
+                256,
+                512,
+                1000,
+            ]
+    sampling_rate: 0.05
+
+attack:
+    type: scale
+    scale_factor: -5.0
+    start_round: 500
+
+aggregation:
+    type: balance
+    params:
+        A: 2.0 # threshold scale factor
+        K: 1.0 # decay rate over rounds
+        a: 0.5 # own-model weight in convex combo
+
+name: balance_mnist_utility
+output_dir: ./results/experiments/balance/mnist
+device: auto
+seed: 42
