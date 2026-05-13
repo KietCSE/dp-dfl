@@ -138,6 +138,11 @@ class NoiseGameDFLSimulator(BaseSimulator):
             per_node_detection = {nid: (0, 0, 0, 0) for nid in self.nodes}
             node_agg_metrics = {nid: {} for nid in self.nodes}
 
+            # Notify round-dependent aggregators (e.g. balance) so their
+            # decay-scheduled thresholds advance each round.
+            if hasattr(self.aggregator, "set_round"):
+                self.aggregator.set_round(t, self.config.training.n_rounds)
+
             for node in self.nodes.values():
                 if node.id not in active_ids:
                     continue  # inactive: skip aggregation

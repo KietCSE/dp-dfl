@@ -18,7 +18,7 @@ topology:
   seed: 42
 
 training:
-  n_rounds: 200
+  n_rounds: 150
   local_epochs: 1
   batch_size: 64
   lr: 0.01
@@ -46,6 +46,6 @@ aggregation:
   type: fedavg
   params: {}
 
-output_dir: ./results
+output_dir: ./results/kiet
 device: auto
 seed: 42

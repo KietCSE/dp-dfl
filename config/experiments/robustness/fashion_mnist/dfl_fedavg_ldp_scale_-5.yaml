@@ -46,6 +46,6 @@ aggregation:
   type: fedavg
   params: {}
 
-output_dir: ./results
+output_dir: ./results/kiet
 device: auto
 seed: 42

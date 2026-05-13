@@ -10,7 +10,8 @@ AGENTS.md
 results/
 clean-metrics-epsilon-filter.py 
 clean-metrics.py
-# docs/
+docs/
 .agent/
 logs/
-noise_game_*/
+# noise_game_*/
+latex/

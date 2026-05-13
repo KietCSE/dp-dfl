@@ -4,7 +4,7 @@ dataset:
   name: fashion_mnist
   split:
     mode: iid
-    samples_per_node: 7000
+    samples_per_node: 2000
     alpha: 1.0                # ignored in iid mode
 
 model:
@@ -18,7 +18,7 @@ topology:
   seed: 42
 
 training:
-  n_rounds: 200
+  n_rounds: 150
   local_epochs: 1
   batch_size: 64
   lr: 0.01
@@ -47,6 +47,6 @@ aggregation:
   type: fedavg                # placeholder — CFLSimulator does its own server-side aggregation
   params: {}
 
-output_dir: ./results
+output_dir: ./results/kiet
 device: auto
 seed: 42
