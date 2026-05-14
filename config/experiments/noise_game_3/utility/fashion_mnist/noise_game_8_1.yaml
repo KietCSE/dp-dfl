@@ -78,6 +78,6 @@ noise_game:
     beta_strat: 0.04
     sigma_total: 0.5
     nsr_warn: 20000.0
-output_dir: ./results/noise_game_2/utility/fashion_mnist/noise_game_8_1
+output_dir: ./results/noise_game_3/utility/fashion_mnist/noise_game_8_1
 device: auto
 seed: 42

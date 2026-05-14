@@ -78,5 +78,5 @@ noise_game:
     beta_strat: 0.0
     sigma_total: 0.5
     nsr_warn: 20000.0
-output_dir: ./results/noise_game_2/ablation/layer_3
+output_dir: ./results/noise_game_3/ablation/layer_3
 seed: 42

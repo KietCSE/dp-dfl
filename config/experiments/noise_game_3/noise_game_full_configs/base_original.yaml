@@ -78,6 +78,6 @@ noise_game:
     beta_strat: 0.04
     sigma_total: 0.5
     nsr_warn: 20000.0
-output_dir: ./results/noise_game_2/ablation/baseforeverything
+output_dir: ./results/noise_game_3/ablation/baseforeverything
 device: auto
 seed: 42
