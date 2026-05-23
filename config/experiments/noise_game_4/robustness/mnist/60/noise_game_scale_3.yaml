@@ -77,6 +77,6 @@ noise_game:
     beta_strat: 0.04
     sigma_total: 0.5
     nsr_warn: 20000.0
-output_dir: ./results/noise_game_3/robustness/mnist/60/noise_game_scale_3
+output_dir: ./results/noise_game_4/robustness/mnist/60/noise_game_scale_3
 device: auto
 seed: 42
